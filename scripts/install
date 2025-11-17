@@ -393,16 +393,14 @@ interactive_selection() {
   # Calculate maximum item name length for column width
   # Set a fixed maximum width to prevent wrapping with different window sizes
   local max_name_len=0
-  local max_allowed_width=35  # Maximum width for item display (including checkbox and status)
+  local max_allowed_width=30  # Maximum width for item display (reduced for better fit)
   
   for i in "${!items[@]}"; do
     local item_data="${items[$i]}"
     local name="${item_data%%|*}"
-    local status_marker=""
-    if [[ "$item_data" == *"|installed" ]]; then
-      status_marker=" (installed)"
-    fi
-    local item_len=$(( ${#name} + ${#status_marker} + 5 ))  # 5 for " [√] " or "  [ ] "
+    local status_marker=" (installed)"  # Always account for max status length
+    # Calculate: cursor/space (2) + checkbox (3) + space (1) + name + status
+    local item_len=$(( 2 + 3 + 1 + ${#name} + ${#status_marker} ))
     if (( item_len > max_name_len )); then
       max_name_len=$item_len
     fi
@@ -413,7 +411,12 @@ interactive_selection() {
     max_name_len=$max_allowed_width
   fi
   
-  local col_width=$((max_name_len + 2))  # Add spacing between columns
+  # Column width: use the calculated max, ensure it's at least a minimum
+  local min_col_width=25
+  if (( max_name_len < min_col_width )); then
+    max_name_len=$min_col_width
+  fi
+  local col_width=$max_name_len
   
   # Calculate minimum terminal width needed (4 columns + padding)
   # This needs to be available to redraw_screen, so define it early
@@ -465,9 +468,11 @@ interactive_selection() {
     fi
     
     # Calculate available width for the name
-    local prefix_len=5  # "▶ [√] " or "  [ ] "
+    # Account for: cursor (2 chars) or spaces (2 chars) + checkbox (3 chars) + space (1 char) + status
+    local prefix_len=6  # "▶ [√] " or "  [ ] " (6 chars including space after checkbox)
     local status_len=${#status_marker}
-    local max_name_display_len=$((max_allowed_width - prefix_len - status_len))
+    # Use col_width instead of max_allowed_width for consistency
+    local max_name_display_len=$((col_width - prefix_len - status_len))
     
     # Truncate name if it's too long
     local display_name="$name"
@@ -575,9 +580,10 @@ interactive_selection() {
     local cursor_col_pos=$2
     local cursor_row_pos=$3
     
-    # Build the line
+    # Build the line - simpler approach: build each column separately
     local col=0
-    local line_content=""
+    local output=""
+    
     while (( col < num_cols )); do
       local is_cursor=0
       if (( col == cursor_col_pos && row == cursor_row_pos )); then
@@ -586,7 +592,7 @@ interactive_selection() {
       
       local idx=$(get_item_index $col $row)
       if (( idx < total )); then
-        # Get item data for plain width calculation
+        # Get item data
         local item_idx=0
         local item_data=""
         for i in "${!items[@]}"; do
@@ -618,25 +624,34 @@ interactive_selection() {
           local item_str
           item_str=$(get_item_display $col $row $is_cursor)
           
-          # Pad to column width
+          # Calculate padding needed (using plain text length)
           local padding=$((col_width - plain_len))
+          
+          # Build this column's output: item + padding
           if (( padding > 0 )); then
-            item_str="${item_str}$(printf '%*s' "$padding" '')"
+            output="${output}${item_str}$(printf '%*s' "$padding" '')"
+          else
+            output="${output}${item_str}"
           fi
-          line_content="${line_content}${item_str}"
         else
-          # Empty cell
-          line_content="${line_content}$(printf '%*s' "$col_width" '')"
+          # Empty cell - just spaces
+          output="${output}$(printf '%*s' "$col_width" '')"
         fi
       else
         # Empty cell (beyond total items)
-        line_content="${line_content}$(printf '%*s' "$col_width" '')"
+        output="${output}$(printf '%*s' "$col_width" '')"
       fi
+      
+      # Add space between columns (except after last column)
+      if (( col < num_cols - 1 )); then
+        output="${output} "
+      fi
+      
       ((col++))
     done
     
-    # Return the line (trim trailing spaces)
-    echo "${line_content%"${line_content##*[![:space:]]}"}"
+    # Return the line (no trimming - we control the width exactly)
+    echo "$output"
   }
   
   # Function to update a single row (for full redraw)
@@ -694,9 +709,9 @@ interactive_selection() {
       while (( row < num_rows )); do
         local line_content
         line_content=$(build_row_content $row $cursor_col $cursor_row)
-        # Clear to end of line before printing to ensure clean output
+        # Print the line and clear to end of line
         printf "%s" "$line_content" > /dev/tty
-        tput el > /dev/tty 2>/dev/null
+        tput el > /dev/tty 2>/dev/null || true
         printf "\n" > /dev/tty
         ((row++))
       done
