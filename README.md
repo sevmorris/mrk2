@@ -60,6 +60,9 @@ make doctor       # run Homebrew doctor
 # Skip Homebrew casks (no interactive prompts)
 ./scripts/install --no-casks
 
+# Skip Homebrew formulae (CLI tools, no prompts)
+./scripts/install --no-formulae
+
 # Only install Homebrew packages (no casks, no MAS, fully automated)
 ./scripts/install --only-formulae
 
