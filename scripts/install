@@ -207,10 +207,13 @@ read_key() {
   
   # Set terminal to raw mode with timeout (time is in tenths of seconds)
   # This makes read return after 0.1 seconds if no input
+  # Disable echo to prevent escape sequences from appearing
   stty -icanon -echo time 1 min 0 < /dev/tty 2>/dev/null || {
     stty "$old_stty" < /dev/tty 2>/dev/null
     return 1
   }
+  # Ensure echo is definitely off
+  stty -echo < /dev/tty 2>/dev/null
   
   # Read first character (will timeout after 0.1 seconds)
   # Use a slightly longer timeout to ensure Enter is captured
@@ -221,20 +224,31 @@ read_key() {
   if [[ "$key" == $'\033' ]]; then
     # Read the next characters with a small timeout
     local next
-    IFS= read -r -n 1 -t 0.05 next < /dev/tty 2>/dev/null || next=""
+    IFS= read -r -n 1 -t 0.1 next < /dev/tty 2>/dev/null || next=""
     if [[ "$next" == "[" ]]; then
       # Read the direction character
       local dir
-      IFS= read -r -n 1 -t 0.05 dir < /dev/tty 2>/dev/null || dir=""
+      IFS= read -r -n 1 -t 0.1 dir < /dev/tty 2>/dev/null || dir=""
       case "$dir" in
         A) key="UP" ;;
         B) key="DOWN" ;;
         C) key="RIGHT" ;;
         D) key="LEFT" ;;
-        *) key="" ;;
+        *) 
+          # Invalid escape sequence, consume any remaining characters
+          key=""
+          # Flush any remaining escape sequence characters
+          while IFS= read -r -t 0 < /dev/tty 2>/dev/null; do
+            IFS= read -r -n 1 -t 0.01 < /dev/tty >/dev/null 2>&1 || break
+          done
+          ;;
       esac
     else
+      # Not a valid escape sequence, flush remaining characters
       key=""
+      while IFS= read -r -t 0 < /dev/tty 2>/dev/null; do
+        IFS= read -r -n 1 -t 0.01 < /dev/tty >/dev/null 2>&1 || break
+      done
     fi
   elif [[ $read_status -ne 0 ]] || [[ -z "$key" ]]; then
     # Timeout or empty, restore and return
@@ -257,12 +271,22 @@ read_key() {
     key="ENTER"
   fi
   
+  # Flush any remaining input to prevent escape sequences from leaking
+  # Do this BEFORE restoring terminal settings to ensure we consume everything
+  local flush_count=0
+  while IFS= read -r -t 0 < /dev/tty 2>/dev/null && (( flush_count < 10 )); do
+    IFS= read -r -n 1 -t 0.01 < /dev/tty >/dev/null 2>&1 || break
+    ((flush_count++))
+  done
+  
   # Restore terminal settings immediately
   stty "$old_stty" < /dev/tty 2>/dev/null
   
-  # Flush any remaining input to prevent buffering issues
-  while IFS= read -r -t 0 < /dev/tty 2>/dev/null; do
+  # Final flush after restoring (in case anything was buffered)
+  flush_count=0
+  while IFS= read -r -t 0 < /dev/tty 2>/dev/null && (( flush_count < 5 )); do
     IFS= read -r -n 1 -t 0.01 < /dev/tty >/dev/null 2>&1 || break
+    ((flush_count++))
   done
   
   echo -n "$key"
@@ -409,8 +433,9 @@ interactive_selection() {
     local row=$1
     local line_num=$((header_lines + row + 1))
     
-    # Move cursor to the row
+    # Move cursor to the row and clear the entire line first
     tput cup $line_num 0 > /dev/tty 2>/dev/null || return
+    tput el > /dev/tty 2>/dev/null  # Clear to end of line
     
     # Build the line
     local col=0
@@ -434,9 +459,10 @@ interactive_selection() {
       ((col++))
     done
     
-    # Clear to end of line and print
-    tput el > /dev/tty 2>/dev/null
+    # Print the line (trim trailing spaces)
     printf "  %s" "${line%"${line##*[![:space:]]}"}" > /dev/tty
+    # Ensure we're at the end and clear any remaining characters
+    tput el > /dev/tty 2>/dev/null
   }
   
   # Function to redraw the screen (full or incremental)
@@ -483,15 +509,13 @@ interactive_selection() {
     else
       # Incremental update: only update the rows that changed
       if (( prev_cursor_row != cursor_row || prev_cursor_col != cursor_col )); then
-        # Update previous cursor position
+        # Update previous cursor position (removes cursor indicator)
         if (( prev_cursor_row < num_rows )); then
           update_row $prev_cursor_row
-          printf "\n" > /dev/tty
         fi
-        # Update new cursor position
+        # Update new cursor position (adds cursor indicator)
         if (( cursor_row < num_rows )); then
           update_row $cursor_row
-          printf "\n" > /dev/tty
         fi
       fi
     fi
