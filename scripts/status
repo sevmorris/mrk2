@@ -48,10 +48,17 @@ check_brewfile() {
   local taps_count=0
 
   if command -v brew >/dev/null 2>&1; then
-    formulae_count=$(grep -c "^brew " "$BREWFILE" 2>/dev/null || echo 0)
-    casks_count=$(grep -c "^cask " "$BREWFILE" 2>/dev/null || echo 0)
-    mas_count=$(grep -c "^mas " "$BREWFILE" 2>/dev/null || echo 0)
-    taps_count=$(grep -c "^tap " "$BREWFILE" 2>/dev/null || echo 0)
+    # Count items, ensuring we get numeric values (strip whitespace/newlines)
+    formulae_count=$(grep -c "^brew " "$BREWFILE" 2>/dev/null | tr -d '[:space:]' || echo "0")
+    casks_count=$(grep -c "^cask " "$BREWFILE" 2>/dev/null | tr -d '[:space:]' || echo "0")
+    mas_count=$(grep -c "^mas " "$BREWFILE" 2>/dev/null | tr -d '[:space:]' || echo "0")
+    taps_count=$(grep -c "^tap " "$BREWFILE" 2>/dev/null | tr -d '[:space:]' || echo "0")
+
+    # Ensure they're numeric (default to 0 if empty or non-numeric)
+    formulae_count=${formulae_count:-0}
+    casks_count=${casks_count:-0}
+    mas_count=${mas_count:-0}
+    taps_count=${taps_count:-0}
 
     echo "  - Formulae: $formulae_count"
     echo "  - Casks: $casks_count"
