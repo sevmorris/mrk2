@@ -357,6 +357,13 @@ interactive_selection() {
   # Trap to ensure terminal is restored on exit
   trap cleanup_terminal EXIT INT TERM
   
+  # Handle terminal resize - redraw the screen
+  handle_resize() {
+    needs_full_redraw=1
+    redraw_screen
+  }
+  trap handle_resize WINCH
+  
   # Initialize all as unselected
   local i
   for i in "${!items[@]}"; do
@@ -405,6 +412,16 @@ interactive_selection() {
   fi
   
   local col_width=$((max_name_len + 2))  # Add spacing between columns
+  
+  # Calculate minimum terminal width needed (4 columns + padding)
+  local min_terminal_width=$((col_width * num_cols + 4))  # 4 for item row padding
+  
+  # Function to get terminal width
+  get_terminal_width() {
+    local width
+    width=$(tput cols 2>/dev/null || echo 80)
+    echo "$width"
+  }
   
   # Function to get item index from column/row position
   get_item_index() {
@@ -511,8 +528,17 @@ interactive_selection() {
   
   # Function to redraw the screen (full or incremental)
   redraw_screen() {
+    # Check terminal width and warn if too narrow
+    local term_width
+    term_width=$(get_terminal_width)
+    if (( term_width < min_terminal_width )); then
+      # Terminal is too narrow, but we'll still try to display
+      # The fixed column width should prevent wrapping
+      :
+    fi
+    
     if (( needs_full_redraw )) || (( page_start != prev_page_start )); then
-      # Full redraw
+      # Full redraw - clear screen and start from top
       tput clear > /dev/tty 2>/dev/null || clear > /dev/tty
       
       printf "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" > /dev/tty
@@ -548,8 +574,13 @@ interactive_selection() {
       done
       
       printf "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" > /dev/tty
-      # Print menu at column 0 (left-aligned, no padding like the separator above)
-      printf "↑/↓: Navigate column  ←/→: Navigate row  Space: Toggle  d: Done  a: All  n: None  q: Quit\n" > /dev/tty
+      # Print menu at column 0 (left-aligned, no padding)
+      # Use tput to ensure we're at the start of the line
+      tput cr > /dev/tty 2>/dev/null
+      printf "↑/↓: Navigate column  ←/→: Navigate row  Space: Toggle  d: Done  a: All  n: None  q: Quit" > /dev/tty
+      # Clear to end of line to remove any trailing characters
+      tput el > /dev/tty 2>/dev/null
+      printf "\n" > /dev/tty
       
       needs_full_redraw=0
       prev_page_start=$page_start
@@ -707,7 +738,7 @@ interactive_selection() {
   # Explicitly restore terminal before returning
   # This ensures brew bundle and other commands work properly
   cleanup_terminal
-  trap - EXIT INT TERM
+  trap - EXIT INT TERM WINCH
   
   # Double-check terminal is in a normal state
   # Restore saved state explicitly
