@@ -1005,15 +1005,23 @@ install_brewfile() {
   
   log "Installing selected packages..."
   
-  # Run brew bundle with verbose output
-  # Output is already being logged via the exec redirections at the top of the script
-  # stdin should come from the terminal for any prompts (passwords, confirmations)
-  # We need to ensure stdin is connected to /dev/tty for interactive prompts
-  if brew bundle --file="$temp_brewfile" --verbose; then
+  # Ensure stdin is from terminal for any prompts brew bundle might need
+  # The exec redirections handle stdout/stderr logging, but we need to ensure
+  # brew bundle can read from the terminal if it needs to prompt
+  # Use a subshell to ensure proper file descriptor handling
+  (
+    # Ensure stdin is from terminal
+    exec < /dev/tty
+    # Run brew bundle - output will go through the exec redirections
+    brew bundle --file="$temp_brewfile" --verbose
+  )
+  local bundle_exit=$?
+  
+  if (( bundle_exit == 0 )); then
     log "Brewfile installation completed successfully"
     return 0
   else
-    err "Brewfile installation failed"
+    err "Brewfile installation failed (exit code: $bundle_exit)"
     ((ERRORS++))
     return 1
   fi
