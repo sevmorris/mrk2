@@ -1005,11 +1005,11 @@ install_brewfile() {
   
   log "Installing selected packages..."
   
-  # Run brew bundle with proper terminal connection
-  # Use tee to send output to both terminal and log file
-  # This ensures brew bundle can prompt for passwords and display progress
-  # stdin comes from /dev/tty so prompts work, output goes to both terminal and log
-  if brew bundle --file="$temp_brewfile" < /dev/tty 2>&1 | tee -a "$LOGFILE" > /dev/tty; then
+  # Run brew bundle normally
+  # Output is already being logged via the exec redirections at the top of the script
+  # stdin should come from the terminal for any prompts (passwords, confirmations)
+  # We need to ensure stdin is connected to /dev/tty for interactive prompts
+  if brew bundle --file="$temp_brewfile"; then
     log "Brewfile installation completed successfully"
     return 0
   else
