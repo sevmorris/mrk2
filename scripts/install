@@ -201,25 +201,12 @@ install_mas() {
 
 # Read a single keypress, handling escape sequences for arrow keys
 # Returns: "UP", "DOWN", "SPACE", "ENTER", or the character pressed
+# Note: Terminal should already be in raw mode when this is called
 read_key() {
   local key
-  local old_stty
   
-  # Save terminal settings
-  old_stty=$(stty -g 2>/dev/null) || return 1
-  
-  # Set terminal to raw mode with timeout (time is in tenths of seconds)
-  # This makes read return after 0.1 seconds if no input
-  # Disable echo to prevent escape sequences from appearing
-  # Also disable icrnl to prevent carriage return issues
-  stty -icanon -echo -icrnl time 1 min 0 < /dev/tty 2>/dev/null || {
-    stty "$old_stty" < /dev/tty 2>/dev/null
-    return 1
-  }
-  # Ensure echo is definitely off (double-check)
-  stty -echo < /dev/tty 2>/dev/null
-  # Disable any input processing that might cause characters to appear
-  stty -opost < /dev/tty 2>/dev/null
+  # Terminal should already be in raw mode from interactive_selection
+  # We don't need to change terminal settings here
   
   # Read first character (will timeout after 0.1 seconds)
   # Use a slightly longer timeout to ensure Enter is captured
@@ -275,8 +262,7 @@ read_key() {
       ((flush_attempts++))
     done
   elif [[ $read_status -ne 0 ]] || [[ -z "$key" ]]; then
-    # Timeout or empty, restore and return
-    stty "$old_stty" < /dev/tty 2>/dev/null
+    # Timeout or empty, just return empty (terminal stays in raw mode)
     echo -n ""
     return 0
   elif [[ "$key" == " " ]]; then
@@ -296,20 +282,10 @@ read_key() {
   fi
   
   # Flush any remaining input to prevent escape sequences from leaking
-  # Do this BEFORE restoring terminal settings to ensure we consume everything
+  # Since terminal is already in raw mode, we just need to consume any buffered input
   local flush_count=0
-  while IFS= read -r -t 0 < /dev/tty 2>/dev/null && (( flush_count < 10 )); do
-    IFS= read -r -n 1 -t 0.01 < /dev/tty >/dev/null 2>&1 || break
-    ((flush_count++))
-  done
-  
-  # Restore terminal settings immediately
-  stty "$old_stty" < /dev/tty 2>/dev/null
-  
-  # Final flush after restoring (in case anything was buffered)
-  flush_count=0
-  while IFS= read -r -t 0 < /dev/tty 2>/dev/null && (( flush_count < 5 )); do
-    IFS= read -r -n 1 -t 0.01 < /dev/tty >/dev/null 2>&1 || break
+  while IFS= read -r -t 0 < /dev/tty 2>/dev/null && (( flush_count < 20 )); do
+    IFS= read -r -n 1 -t 0.005 < /dev/tty >/dev/null 2>&1 || break
     ((flush_count++))
   done
   
@@ -340,9 +316,22 @@ interactive_selection() {
   local old_stty
   old_stty=$(stty -g 2>/dev/null)
   
+  # Set terminal to raw mode for the entire interactive session
+  # This prevents escape sequences from appearing and ensures consistent behavior
+  stty -icanon -echo -icrnl -opost time 1 min 0 < /dev/tty 2>/dev/null || {
+    stty "$old_stty" < /dev/tty 2>/dev/null
+    return 1
+  }
+  
   # Cleanup function to restore terminal
   cleanup_terminal() {
-    # Restore terminal settings first
+    # Flush any remaining input first
+    local flush_count=0
+    while IFS= read -r -t 0 < /dev/tty 2>/dev/null && (( flush_count < 50 )); do
+      IFS= read -r -n 1 -t 0.01 < /dev/tty >/dev/null 2>&1 || break
+      ((flush_count++))
+    done
+    # Restore terminal settings
     if [[ -n "$old_stty" ]]; then
       stty "$old_stty" < /dev/tty 2>/dev/null
     fi
@@ -498,6 +487,8 @@ interactive_selection() {
       printf "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" > /dev/tty
       if [[ "$type" == "cask" ]]; then
         printf "  Select Homebrew Casks to Install\n" > /dev/tty
+      elif [[ "$type" == "formula" ]]; then
+        printf "  Select Homebrew Formulae to Install\n" > /dev/tty
       else
         printf "  Select Mac App Store Apps to Install\n" > /dev/tty
       fi
@@ -716,12 +707,15 @@ install_brewfile() {
   local mas_count=0
   
   # Arrays to store items for selection
+  local -a formula_items=()
   local -a cask_items=()
   local -a mas_items=()
   # Associative arrays for selected items
+  declare -A selected_formulae=()
   declare -A selected_casks=()
   declare -A selected_mas=()
   # Map names to their Brewfile lines
+  declare -A formula_lines=()
   declare -A cask_lines=()
   declare -A mas_lines=()
 
@@ -734,7 +728,7 @@ install_brewfile() {
       continue
     fi
 
-    # Handle formulae (install automatically, no prompt)
+    # Handle formulae (now interactive like casks and MAS apps)
     if [[ "$line" =~ ^brew\ \"([^\"]+)\" ]]; then
       local formula="${BASH_REMATCH[1]}"
       ((formulae_count++))
@@ -742,8 +736,21 @@ install_brewfile() {
       if (( NO_FORMULAE )); then
         continue
       fi
-      
-      echo "$line" >> "$temp_brewfile"
+
+      # Check if already installed (but still add to selection list)
+      local already_installed=0
+      if brew list "$formula" >/dev/null 2>&1; then
+        already_installed=1
+      fi
+
+      # Add to selection list (even if already installed, so user can see all options)
+      # Use same format as casks: "name|line|installed" or "name|line|"
+      if (( already_installed )); then
+        formula_items+=("$formula|$line|installed")
+      else
+        formula_items+=("$formula|$line|")
+      fi
+      formula_lines["$formula"]="$line"
       continue
     fi
 
@@ -832,7 +839,33 @@ install_brewfile() {
     echo "$line" >> "$temp_brewfile"
   done < "$BREWFILE"
 
-  log "Found: $formulae_count formulae, ${#cask_items[@]} casks to select, ${#mas_items[@]} MAS apps to select"
+  log "Found: ${#formula_items[@]} formulae to select, ${#cask_items[@]} casks to select, ${#mas_items[@]} MAS apps to select"
+
+  # Show interactive selection for formulae
+  if (( ${#formula_items[@]} > 0 )) && (( ! NO_FORMULAE )); then
+    interactive_selection "formula" formula_items selected_formulae
+    
+    # Add selected formulae to temp Brewfile (skip already installed ones)
+    local selected_count=0
+    for name in "${!selected_formulae[@]}"; do
+      if (( selected_formulae["$name"] == 1 )); then
+        # Check if already installed - skip if so
+        if brew list "$name" >/dev/null 2>&1; then
+          log "Formula '$name' is already installed, skipping installation"
+          continue
+        fi
+        echo "${formula_lines[$name]}" >> "$temp_brewfile"
+        ((selected_count++))
+      fi
+    done
+    FORMULAE_INSTALLED=$selected_count
+    log "Selected $selected_count/${#formula_items[@]} formulae for installation"
+  elif (( NO_FORMULAE )); then
+    FORMULAE_INSTALLED=0
+    log "Skipped ${#formula_items[@]} formulae (--no-formulae flag)"
+  else
+    FORMULAE_INSTALLED=0
+  fi
 
   # Show interactive selection for casks
   if (( ${#cask_items[@]} > 0 )) && (( ! NO_CASKS )); then
@@ -888,14 +921,6 @@ install_brewfile() {
     done
     MAS_APPS_INSTALLED=$selected_count
     log "Selected $selected_count/${#mas_items[@]} MAS apps for installation"
-  fi
-
-  # Track formulae count (0 if skipped)
-  if (( NO_FORMULAE )); then
-    FORMULAE_INSTALLED=0
-    log "Skipped $formulae_count formulae (--no-formulae flag)"
-  else
-    FORMULAE_INSTALLED=$formulae_count
   fi
 
   # Install from temporary Brewfile
