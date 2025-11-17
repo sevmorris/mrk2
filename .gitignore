@@ -1,0 +1,34 @@
+# Logs
+*.log
+mrk2-install.log
+*.log.*
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.sublime-*
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# State directories (user-specific)
+.mrk2/
+
+# Test files
+test-*
+*.test
+
+# Homebrew
+Brewfile.lock.json
+

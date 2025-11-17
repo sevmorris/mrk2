@@ -1,0 +1,353 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# mrk2 installer — Homebrew packages and applications installation
+
+# Check if running on macOS
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "Error: This script is designed for macOS only." >&2
+  echo "Detected OS: $(uname -s)" >&2
+  exit 1
+fi
+
+NO_MAS=0
+NO_CASKS=0
+ONLY_FORMULAE=0
+DEBUG=0
+DRY_RUN=0
+SKIP_BREW_INSTALL=0
+
+while (("$#")); do
+  case "$1" in
+    --no-mas) NO_MAS=1 ;;
+    --no-casks) NO_CASKS=1 ;;
+    --only-formulae) ONLY_FORMULAE=1; NO_CASKS=1; NO_MAS=1 ;;
+    --skip-brew-install) SKIP_BREW_INSTALL=1 ;;
+    --debug) DEBUG=1 ;;
+    --dry-run) DRY_RUN=1 ;;
+    -h|--help)
+      cat <<'USAGE'
+mrk2 installer
+
+Usage: scripts/install [options]
+  --no-mas              Skip Mac App Store app installation
+  --no-casks            Skip Homebrew cask installation (GUI apps)
+  --only-formulae       Only install Homebrew formulae (CLI tools)
+  --skip-brew-install   Skip Homebrew installation (assume it's already installed)
+  --dry-run             Preview changes without applying them
+  --debug               Enable bash tracing (set -x)
+USAGE
+      exit 0
+      ;;
+    *) echo "Unknown option: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+(( DEBUG )) && set -x
+
+if (( DRY_RUN )); then
+  echo "=== DRY RUN MODE: No changes will be made ===" >&2
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+BREWFILE="$REPO_ROOT/Brewfile"
+LOGFILE="$HOME/mrk2-install.log"
+
+# Create log directory
+if ! mkdir -p "$(dirname "$LOGFILE")"; then
+  echo "Error: Failed to create log directory" >&2
+  exit 1
+fi
+
+log()  { printf "[mrk2] %s\n" "$*" >&2; }
+warn() { printf "[warn] %s\n" "$*" >&2; }
+err()  { printf "[err ] %s\n" "$*" >&2; }
+dry()  { if (( DRY_RUN )); then printf "[dry] %s\n" "$*"; else log "$@"; fi; }
+
+# Setup logging with rotation
+setup_logging() {
+  local max_size=10485760  # 10MB
+  if [[ -f "$LOGFILE" ]] && [[ $(stat -f%z "$LOGFILE" 2>/dev/null || echo 0) -gt $max_size ]]; then
+    local rotated="${LOGFILE}.old"
+    mv "$LOGFILE" "$rotated" 2>/dev/null || true
+    echo "[mrk2] Rotated log file (size exceeded ${max_size} bytes)" >&2
+  fi
+}
+
+setup_logging
+exec > >(tee -a "$LOGFILE") 2>&1
+log "Starting mrk2 installation... (log: $LOGFILE)"
+if (( DRY_RUN )); then
+  log "DRY RUN MODE: No changes will be made"
+fi
+
+# Track installation statistics
+BREW_INSTALLED=0
+FORMULAE_INSTALLED=0
+CASKS_INSTALLED=0
+MAS_APPS_INSTALLED=0
+ERRORS=0
+WARNINGS=0
+
+# Check if Homebrew is installed
+check_homebrew() {
+  if command -v brew >/dev/null 2>&1; then
+    log "Homebrew is already installed: $(brew --version | head -n1)"
+    return 0
+  fi
+  return 1
+}
+
+# Install Homebrew
+install_homebrew() {
+  if (( SKIP_BREW_INSTALL )); then
+    log "Skipping Homebrew installation (--skip-brew-install flag)"
+    if ! check_homebrew; then
+      err "Homebrew is not installed and --skip-brew-install was specified"
+      return 1
+    fi
+    return 0
+  fi
+
+  if check_homebrew; then
+    return 0
+  fi
+
+  log "Homebrew not found. Installing Homebrew..."
+  if (( DRY_RUN )); then
+    dry "Would run: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+    BREW_INSTALLED=1
+    return 0
+  fi
+
+  if /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"; then
+    # Add Homebrew to PATH for Apple Silicon Macs
+    if [[ -f /opt/homebrew/bin/brew ]]; then
+      eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [[ -f /usr/local/bin/brew ]]; then
+      eval "$(/usr/local/bin/brew shellenv)"
+    fi
+    log "Homebrew installed successfully"
+    BREW_INSTALLED=1
+    return 0
+  else
+    err "Failed to install Homebrew"
+    return 1
+  fi
+}
+
+# Ensure Homebrew is in PATH
+ensure_brew_path() {
+  if ! command -v brew >/dev/null 2>&1; then
+    if [[ -f /opt/homebrew/bin/brew ]]; then
+      eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [[ -f /usr/local/bin/brew ]]; then
+      eval "$(/usr/local/bin/brew shellenv)"
+    fi
+  fi
+
+  if ! command -v brew >/dev/null 2>&1; then
+    err "Homebrew is not in PATH. Please install it manually or restart your shell."
+    return 1
+  fi
+}
+
+# Check if mas is installed
+check_mas() {
+  if command -v mas >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+# Install mas (Mac App Store CLI)
+install_mas() {
+  if check_mas; then
+    log "mas is already installed: $(mas version 2>/dev/null || echo 'unknown version')"
+    return 0
+  fi
+
+  if (( NO_MAS )); then
+    log "Skipping mas installation (--no-mas flag)"
+    return 0
+  fi
+
+  log "Installing mas (Mac App Store CLI)..."
+  if (( DRY_RUN )); then
+    dry "Would run: brew install mas"
+    return 0
+  fi
+
+  if ! ensure_brew_path; then
+    return 1
+  fi
+
+  if brew install mas; then
+    log "mas installed successfully"
+    return 0
+  else
+    warn "Failed to install mas. Mac App Store apps will be skipped."
+    ((WARNINGS++))
+    return 1
+  fi
+}
+
+# Install packages from Brewfile
+install_brewfile() {
+  if [[ ! -f "$BREWFILE" ]]; then
+    err "Brewfile not found: $BREWFILE"
+    return 1
+  fi
+
+  if ! ensure_brew_path; then
+    return 1
+  fi
+
+  log "Installing packages from Brewfile..."
+
+  if (( DRY_RUN )); then
+    dry "Would run: brew bundle --file=\"$BREWFILE\" --no-lock"
+    log "Brewfile contains:"
+    grep -E "^(brew|cask|mas|tap)" "$BREWFILE" | wc -l | xargs echo "  - Packages/casks/apps:"
+    return 0
+  fi
+
+  # Count what we're installing
+  local formulae_count=0
+  local casks_count=0
+  local mas_count=0
+
+  if (( ! NO_CASKS )); then
+    casks_count=$(grep -c "^cask " "$BREWFILE" 2>/dev/null || echo 0)
+  fi
+
+  if (( ! NO_MAS )); then
+    mas_count=$(grep -c "^mas " "$BREWFILE" 2>/dev/null || echo 0)
+  fi
+
+  formulae_count=$(grep -c "^brew " "$BREWFILE" 2>/dev/null || echo 0)
+
+  log "Found: $formulae_count formulae, $casks_count casks, $mas_count MAS apps"
+
+  # Build brew bundle command
+  local bundle_cmd="brew bundle --file=\"$BREWFILE\" --no-lock"
+  
+  if (( NO_CASKS )); then
+    bundle_cmd="$bundle_cmd --no-casks"
+  fi
+
+  if (( NO_MAS )); then
+    bundle_cmd="$bundle_cmd --no-mas"
+  fi
+
+  # Run brew bundle
+  if eval "$bundle_cmd"; then
+    log "Brewfile installation completed successfully"
+    
+    # Count what was actually installed (rough estimate)
+    if (( ! NO_CASKS )); then
+      CASKS_INSTALLED=$casks_count
+    fi
+    if (( ! NO_MAS )); then
+      MAS_APPS_INSTALLED=$mas_count
+    fi
+    FORMULAE_INSTALLED=$formulae_count
+    
+    return 0
+  else
+    err "Brewfile installation failed"
+    ((ERRORS++))
+    return 1
+  fi
+}
+
+# Main installation flow
+main() {
+  log "Starting mrk2 installation process..."
+
+  # Phase 1: Install Homebrew
+  if ! install_homebrew; then
+    err "Failed to install Homebrew. Aborting."
+    exit 1
+  fi
+
+  # Ensure Homebrew is in PATH
+  if ! ensure_brew_path; then
+    err "Homebrew is not available. Aborting."
+    exit 1
+  fi
+
+  # Phase 2: Install mas (if needed)
+  if (( ! NO_MAS )); then
+    install_mas || warn "mas installation failed, continuing without MAS apps"
+  fi
+
+  # Phase 3: Install from Brewfile
+  if ! install_brewfile; then
+    err "Failed to install packages from Brewfile"
+    ((ERRORS++))
+  fi
+
+  # Installation summary
+  show_summary
+}
+
+show_summary() {
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  Installation Summary"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  
+  if (( DRY_RUN )); then
+    echo "  Mode: DRY RUN (no changes were made)"
+    echo ""
+  fi
+  
+  if (( BREW_INSTALLED > 0 )); then
+    echo "  ✓ Homebrew installed"
+  fi
+  
+  if (( FORMULAE_INSTALLED > 0 )); then
+    echo "  ✓ Formulae installed: ~$FORMULAE_INSTALLED"
+  fi
+  
+  if (( CASKS_INSTALLED > 0 )); then
+    echo "  ✓ Casks installed: ~$CASKS_INSTALLED"
+  fi
+  
+  if (( MAS_APPS_INSTALLED > 0 )); then
+    echo "  ✓ Mac App Store apps installed: ~$MAS_APPS_INSTALLED"
+  fi
+  
+  if (( ERRORS > 0 )); then
+    echo "  ✗ Errors encountered: $ERRORS"
+  fi
+  
+  if (( WARNINGS > 0 )); then
+    echo "  ⚠ Warnings: $WARNINGS"
+  fi
+  
+  echo ""
+  echo "  Log file: $LOGFILE"
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+}
+
+if (( ! DRY_RUN )); then
+  main
+  if (( ERRORS > 0 )); then
+    log "Installation completed with errors. Check the log: $LOGFILE"
+    exit 1
+  else
+    log "Installation complete."
+  fi
+else
+  main
+  echo ""
+  log "Dry run complete. No changes were made."
+  echo "Run without --dry-run to apply changes."
+fi
+

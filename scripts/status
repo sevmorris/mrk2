@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# mrk2 status — check installation status
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+BREWFILE="$REPO_ROOT/Brewfile"
+
+log()  { printf "[status] %s\n" "$*"; }
+warn() { printf "[warn]  %s\n" "$*"; }
+
+check_homebrew() {
+  if command -v brew >/dev/null 2>&1; then
+    local version
+    version=$(brew --version | head -n1)
+    echo "✓ Homebrew: $version"
+    return 0
+  else
+    echo "✗ Homebrew: Not installed"
+    return 1
+  fi
+}
+
+check_mas() {
+  if command -v mas >/dev/null 2>&1; then
+    local version
+    version=$(mas version 2>/dev/null || echo "unknown")
+    echo "✓ mas: $version"
+    return 0
+  else
+    echo "✗ mas: Not installed"
+    return 1
+  fi
+}
+
+check_brewfile() {
+  if [[ ! -f "$BREWFILE" ]]; then
+    echo "✗ Brewfile: Not found at $BREWFILE"
+    return 1
+  fi
+
+  echo "✓ Brewfile: Found at $BREWFILE"
+  
+  local formulae_count=0
+  local casks_count=0
+  local mas_count=0
+  local taps_count=0
+
+  if command -v brew >/dev/null 2>&1; then
+    formulae_count=$(grep -c "^brew " "$BREWFILE" 2>/dev/null || echo 0)
+    casks_count=$(grep -c "^cask " "$BREWFILE" 2>/dev/null || echo 0)
+    mas_count=$(grep -c "^mas " "$BREWFILE" 2>/dev/null || echo 0)
+    taps_count=$(grep -c "^tap " "$BREWFILE" 2>/dev/null || echo 0)
+
+    echo "  - Formulae: $formulae_count"
+    echo "  - Casks: $casks_count"
+    echo "  - MAS apps: $mas_count"
+    if (( taps_count > 0 )); then
+      echo "  - Taps: $taps_count"
+    fi
+  fi
+
+  return 0
+}
+
+check_installed_packages() {
+  if ! command -v brew >/dev/null 2>&1; then
+    warn "Homebrew not available, skipping package check"
+    return 1
+  fi
+
+  echo ""
+  echo "Installed packages from Brewfile:"
+  
+  local installed=0
+  local missing=0
+  local total=0
+
+  # Check formulae
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    [[ "$line" =~ ^# ]] && continue
+    
+    if [[ "$line" =~ ^brew\ \"([^\"]+)\" ]]; then
+      local pkg="${BASH_REMATCH[1]}"
+      ((total++))
+      if brew list "$pkg" >/dev/null 2>&1; then
+        echo "  ✓ $pkg"
+        ((installed++))
+      else
+        echo "  ✗ $pkg (not installed)"
+        ((missing++))
+      fi
+    fi
+  done < "$BREWFILE"
+
+  # Check casks
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    [[ "$line" =~ ^# ]] && continue
+    
+    if [[ "$line" =~ ^cask\ \"([^\"]+)\" ]]; then
+      local cask="${BASH_REMATCH[1]}"
+      ((total++))
+      if brew list --cask "$cask" >/dev/null 2>&1; then
+        echo "  ✓ $cask (cask)"
+        ((installed++))
+      else
+        echo "  ✗ $cask (cask, not installed)"
+        ((missing++))
+      fi
+    fi
+  done < "$BREWFILE"
+
+  echo ""
+  echo "Summary: $installed/$total installed, $missing missing"
+}
+
+main() {
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  mrk2 Installation Status"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+
+  check_homebrew
+  check_mas
+  check_brewfile
+
+  if command -v brew >/dev/null 2>&1; then
+    check_installed_packages
+  fi
+
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+}
+
+main
+

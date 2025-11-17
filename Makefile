@@ -1,0 +1,30 @@
+SHELL := /bin/bash
+
+# Directories
+REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
+SCRIPTS   := $(REPO_ROOT)/scripts
+
+.PHONY: all install fix-exec status update doctor
+
+all: install
+bootstrap: install
+
+fix-exec:
+	@echo "Making scripts executables..."
+	@find $(SCRIPTS) -type f -maxdepth 1 -not -name "*.md" -exec chmod +x {} + 2>/dev/null || true
+
+install: fix-exec
+	@"$(SCRIPTS)/install"
+
+status:
+	@"$(SCRIPTS)/status"
+
+update:
+	@brew update
+	@brew upgrade
+	@brew upgrade --cask
+	@mas upgrade
+
+doctor:
+	@brew doctor
+
