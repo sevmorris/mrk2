@@ -208,24 +208,23 @@ read_key() {
   # Terminal should already be in raw mode from interactive_selection
   # We don't need to change terminal settings here
   
-  # Read first character (will timeout after 0.1 seconds)
-  # Use a slightly longer timeout to ensure Enter is captured
+  # Read first character (will timeout after 0.2 seconds)
+  # In raw mode, we need to read carefully to avoid blocking
   IFS= read -r -n 1 -t 0.2 key < /dev/tty 2>/dev/null
   local read_status=$?
   
-  # If we got escape sequence, read more aggressively
+  # If we got escape sequence, read the rest immediately
   if [[ "$key" == $'\033' ]]; then
-    # Read the next 2 characters with timeout to get [A-D]
-    # Use a temporary variable to capture the read result
-    local esc_rest=""
-    local next_char
-    local dir_char
+    # Read the next 2 characters immediately (no timeout in raw mode)
+    # We need to read quickly to consume the entire sequence
+    local next_char=""
+    local dir_char=""
     
-    # Read the '[' character
-    if IFS= read -r -n 1 -t 0.1 next_char < /dev/tty 2>/dev/null; then
+    # Try to read '[' with a very short timeout
+    if IFS= read -r -n 1 -t 0.05 next_char < /dev/tty 2>/dev/null; then
       if [[ "$next_char" == "[" ]]; then
         # Read the direction character [A-D]
-        if IFS= read -r -n 1 -t 0.1 dir_char < /dev/tty 2>/dev/null; then
+        if IFS= read -r -n 1 -t 0.05 dir_char < /dev/tty 2>/dev/null; then
           case "$dir_char" in
             A) key="UP" ;;
             B) key="DOWN" ;;
@@ -237,28 +236,28 @@ read_key() {
               ;;
           esac
         else
-          # Timeout reading direction, invalid sequence
+          # Timeout reading direction
           key=""
         fi
       else
-        # Not a standard arrow key sequence, consume and ignore
+        # Not a standard arrow key sequence
         key=""
       fi
     else
-      # Timeout reading '[', invalid sequence
+      # Timeout reading '['
       key=""
     fi
     
-    # Aggressively flush any remaining characters that might be in the buffer
-    # This is critical when scrolling quickly to prevent escape sequences from leaking
+    # Immediately flush any remaining characters in the buffer
+    # This is critical - consume everything that might be left
     local flush_attempts=0
-    while (( flush_attempts < 30 )); do
-      # Check if there's data available (non-blocking)
-      if ! IFS= read -r -t 0 < /dev/tty 2>/dev/null; then
+    while (( flush_attempts < 50 )); do
+      # Use a very short timeout to check for available data
+      if ! IFS= read -r -t 0.001 < /dev/tty 2>/dev/null; then
         break
       fi
-      # Consume one character with very short timeout
-      IFS= read -r -n 1 -t 0.005 < /dev/tty >/dev/null 2>&1 || break
+      # Consume one character immediately
+      IFS= read -r -n 1 -t 0.001 < /dev/tty >/dev/null 2>&1 || break
       ((flush_attempts++))
     done
   elif [[ $read_status -ne 0 ]] || [[ -z "$key" ]]; then
@@ -318,19 +317,31 @@ interactive_selection() {
   
   # Set terminal to raw mode for the entire interactive session
   # This prevents escape sequences from appearing and ensures consistent behavior
-  stty -icanon -echo -icrnl -opost time 1 min 0 < /dev/tty 2>/dev/null || {
+  # On macOS, we need to be careful with stty settings
+  # Disable canonical mode, echo, and all input processing
+  stty -icanon -echo -icrnl -opost -isig -ixon -iexten time 0 min 0 < /dev/tty 2>/dev/null || {
     stty "$old_stty" < /dev/tty 2>/dev/null
     return 1
   }
   
+  # Double-check echo is off
+  stty -echo < /dev/tty 2>/dev/null
+  
+  # Hide cursor to prevent visual artifacts
+  tput civis > /dev/tty 2>/dev/null
+  
   # Cleanup function to restore terminal
   cleanup_terminal() {
-    # Flush any remaining input first
+    # Show cursor again
+    tput cnorm > /dev/tty 2>/dev/null
+    
+    # Flush any remaining input first (very aggressively)
     local flush_count=0
-    while IFS= read -r -t 0 < /dev/tty 2>/dev/null && (( flush_count < 50 )); do
-      IFS= read -r -n 1 -t 0.01 < /dev/tty >/dev/null 2>&1 || break
+    while IFS= read -r -t 0 < /dev/tty 2>/dev/null && (( flush_count < 100 )); do
+      IFS= read -r -n 1 -t 0.001 < /dev/tty >/dev/null 2>&1 || break
       ((flush_count++))
     done
+    
     # Restore terminal settings
     if [[ -n "$old_stty" ]]; then
       stty "$old_stty" < /dev/tty 2>/dev/null
