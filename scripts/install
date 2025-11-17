@@ -77,7 +77,9 @@ setup_logging() {
 }
 
 setup_logging
-exec > >(tee -a "$LOGFILE") 2>&1
+# Redirect output to log, but keep stderr available for prompts
+exec > >(tee -a "$LOGFILE")
+exec 2> >(tee -a "$LOGFILE" >&2)
 log "Starting mrk2 installation... (log: $LOGFILE)"
 if (( DRY_RUN )); then
   log "DRY RUN MODE: No changes will be made"
@@ -206,8 +208,11 @@ prompt_yes_no() {
     return 1
   fi
   
+  # Write prompt directly to /dev/tty to bypass log redirection
+  # Read from /dev/tty to get user input
   while true; do
-    read -r -p "$prompt_msg [y/N]: " response
+    printf "%s [y/N]: " "$prompt_msg" > /dev/tty
+    read -r response < /dev/tty
     case "$response" in
       [Yy]|[Yy][Ee][Ss])
         return 0
@@ -216,7 +221,7 @@ prompt_yes_no() {
         return 1
         ;;
       *)
-        echo "Please answer yes (y) or no (n)." >&2
+        echo "Please answer yes (y) or no (n)." > /dev/tty
         ;;
     esac
   done
@@ -236,7 +241,7 @@ install_brewfile() {
   log "Installing packages from Brewfile..."
 
   if (( DRY_RUN )); then
-    dry "Would run: brew bundle --file=\"$BREWFILE\" --no-lock"
+    dry "Would run: brew bundle --file=\"$BREWFILE\""
     log "Brewfile contains:"
     grep -E "^(brew|cask|mas|tap)" "$BREWFILE" | wc -l | xargs echo "  - Packages/casks/apps:"
     return 0
@@ -313,7 +318,8 @@ install_brewfile() {
       # Check if already installed (mas list shows installed apps)
       local already_installed=0
       if command -v mas >/dev/null 2>&1; then
-        if mas list | grep -q "^$app_id "; then
+        # Suppress the Spotlight warning from mas list
+        if mas list 2>/dev/null | grep -q "^$app_id "; then
           already_installed=1
         fi
       fi
@@ -347,7 +353,8 @@ install_brewfile() {
       # Check if already installed
       local already_installed=0
       if command -v mas >/dev/null 2>&1; then
-        if mas list | grep -q "^$app_id "; then
+        # Suppress the Spotlight warning from mas list
+        if mas list 2>/dev/null | grep -q "^$app_id "; then
           already_installed=1
         fi
       fi
@@ -382,7 +389,7 @@ install_brewfile() {
 
   # Install from temporary Brewfile
   log "Installing selected packages..."
-  if brew bundle --file="$temp_brewfile" --no-lock; then
+  if brew bundle --file="$temp_brewfile"; then
     log "Brewfile installation completed successfully"
     
     FORMULAE_INSTALLED=$formulae_count
