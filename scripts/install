@@ -503,6 +503,7 @@ interactive_selection() {
     done
     
     # Print the line (trim trailing spaces)
+    # Note: Items have 2 spaces of padding at the start for alignment
     printf "  %s" "${line%"${line##*[![:space:]]}"}" > /dev/tty
     # Ensure we're at the end and clear any remaining characters
     tput el > /dev/tty 2>/dev/null
@@ -547,6 +548,7 @@ interactive_selection() {
       done
       
       printf "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" > /dev/tty
+      # Print menu at column 0 (left-aligned, no padding like the separator above)
       printf "↑/↓: Navigate column  ←/→: Navigate row  Space: Toggle  d: Done  a: All  n: None  q: Quit\n" > /dev/tty
       
       needs_full_redraw=0
