@@ -289,18 +289,20 @@ interactive_selection() {
     selected["$name"]=0
   done
   
-  # Prompt for each item
+  # Prompt for each item (skip already installed)
   for i in "${!items[@]}"; do
     local item_data="${items[$i]}"
     local name="${item_data%%|*}"
-    local status_marker=""
+    
+    # Skip if already installed
     if [[ "$item_data" == *"|installed" ]]; then
-      status_marker=" (already installed)"
+      selected["$name"]=0
+      continue
     fi
     
     # Prompt user
     while true; do
-      printf "Install %s%s? [y/N]: " "$name" "$status_marker" > /dev/tty
+      printf "Install %s? [y/N]: " "$name" > /dev/tty
       read -r response < /dev/tty
       case "$response" in
         [yY]|[yY][eE][sS])

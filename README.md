@@ -25,7 +25,7 @@ make fix-exec && make install
 - **CLI tools** (formulae) from the Brewfile (ripgrep, shellcheck, languages, etc.) — **interactive prompts**
 - **Applications** via Homebrew Casks (browsers, editors, utilities, etc.) — **interactive prompts**
 
-> **Note:** All packages (formulae and casks) are presented one at a time with simple yes/no prompts. Items already installed are marked and will be skipped during installation even if selected.
+> **Note:** All packages (formulae and casks) are presented one at a time with simple yes/no prompts. Items already installed are automatically skipped (no prompt shown).
 
 ---
 
@@ -74,7 +74,7 @@ Install <package-name>? [y/N]:
 
 - **y** or **Y** — Install this item
 - **n**, **N**, or **Enter** — Skip this item (default)
-- Items already installed are marked with "(already installed)" and will be skipped during installation even if you select them
+- Items already installed are automatically skipped (no prompt shown)
 
 ### Check Installation Status
 
