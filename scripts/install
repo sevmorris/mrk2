@@ -288,13 +288,16 @@ interactive_selection() {
   
   # Cleanup function to restore terminal
   cleanup_terminal() {
+    # Restore terminal settings first
     if [[ -n "$old_stty" ]]; then
       stty "$old_stty" < /dev/tty 2>/dev/null
     fi
     # Ensure echo is back on
     stty echo < /dev/tty 2>/dev/null
+    # Ensure canonical mode is restored
+    stty icanon < /dev/tty 2>/dev/null
     # Clear screen
-    clear > /dev/tty 2>/dev/null
+    tput clear > /dev/tty 2>/dev/null || clear > /dev/tty 2>/dev/null
   }
   
   # Trap to ensure terminal is restored on exit
@@ -500,6 +503,11 @@ interactive_selection() {
     local key
     key=$(read_key)
     
+    # Check if we should exit (in case done was set elsewhere)
+    if (( done )); then
+      break
+    fi
+    
     # Handle empty/timeout - redraw to keep screen fresh
     if [[ -z "$key" ]]; then
       continue
@@ -605,6 +613,11 @@ interactive_selection() {
         # Ignore other keys
         ;;
     esac
+    
+    # Check if we should exit after processing the key
+    if (( done )); then
+      break
+    fi
   done
   
   # Cleanup
