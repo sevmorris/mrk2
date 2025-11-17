@@ -476,7 +476,7 @@ interactive_selection() {
       done
       
       printf "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" > /dev/tty
-      printf "\n  ↑/↓: Navigate column  ←/→: Navigate row  Space: Toggle  Enter/d: Done  a: All  n: None  q: Quit\n" > /dev/tty
+      printf "\n  ↑/↓: Navigate column  ←/→: Navigate row  Space: Toggle  d: Done  a: All  n: None  q: Quit\n" > /dev/tty
       
       needs_full_redraw=0
       prev_page_start=$page_start

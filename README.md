@@ -72,7 +72,7 @@ make doctor       # run Homebrew doctor
 - **↑/↓ Arrow Keys** — Navigate up/down within the current column
 - **←/→ Arrow Keys** — Navigate left/right between columns (same row)
 - **Space** — Toggle selection for the current item
-- **Enter** — Finish selection and proceed with installation
+- **d** — Finish selection and proceed with installation
 - **a** — Select all items
 - **n** — Deselect all items
 - **q** — Quit (deselects all and exits)
