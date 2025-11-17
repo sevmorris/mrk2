@@ -1,6 +1,6 @@
 # mrk2 — macOS application & package installation
 
-**Phase 2** of macOS setup. Installs Homebrew packages, casks, and Mac App Store applications.
+**Phase 2** of macOS setup. Installs Homebrew packages and casks (GUI applications).
 
 This project assumes you've already run [mrk1](https://github.com/sevmorris/mrk1) to set up your shell, dotfiles, and basic system defaults.
 
@@ -24,9 +24,8 @@ make fix-exec && make install
 - **Homebrew** (if not already installed)
 - **CLI tools** (formulae) from the Brewfile (ripgrep, shellcheck, languages, etc.) — **interactive selection**
 - **Applications** via Homebrew Casks (browsers, editors, utilities, etc.) — **interactive selection**
-- **Mac App Store apps** via `mas` (Final Cut Pro, Logic Pro, etc.) — **interactive selection**
 
-> **Note:** All packages (formulae, casks, and Mac App Store apps) are presented in an interactive multi-column selection form where you can choose which items to install. Items already installed are marked and will be skipped during installation.
+> **Note:** All packages (formulae and casks) are presented in an interactive multi-column selection form where you can choose which items to install. Items already installed are marked and will be skipped during installation.
 
 ---
 
@@ -54,23 +53,20 @@ make doctor       # run Homebrew doctor
 # Preview changes without applying
 ./scripts/install --dry-run
 
-# Skip Mac App Store apps (no interactive prompts)
-./scripts/install --no-mas
-
 # Skip Homebrew casks (no interactive prompts)
 ./scripts/install --no-casks
 
 # Skip Homebrew formulae (CLI tools, no prompts)
 ./scripts/install --no-formulae
 
-# Only install Homebrew formulae (no casks, no MAS, but still interactive)
+# Only install Homebrew formulae (no casks, but still interactive)
 ./scripts/install --only-formulae
 
 # See all options
 ./scripts/install --help
 ```
 
-**Interactive Selection Form:** Formulae (CLI tools), casks (GUI apps), and Mac App Store apps are displayed in a multi-column selection interface (4 columns × 20 rows, showing 80 items at once). You'll see three separate selection screens, one for each type. Use the following controls:
+**Interactive Selection Form:** Formulae (CLI tools) and casks (GUI apps) are displayed in a multi-column selection interface (4 columns × 20 rows, showing 80 items at once). You'll see two separate selection screens, one for each type. Use the following controls:
 
 - **↑/↓ Arrow Keys** — Navigate up/down within the current column
 - **←/→ Arrow Keys** — Navigate left/right between columns (same row)
@@ -96,7 +92,7 @@ make status
 ## Repo layout
 
 ```
-Brewfile          # Homebrew packages, casks, and MAS apps
+Brewfile          # Homebrew packages and casks
 scripts/
   install         # main installer
   status          # check installation status

@@ -10,7 +10,6 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
-NO_MAS=0
 NO_CASKS=0
 NO_FORMULAE=0
 ONLY_FORMULAE=0
@@ -20,10 +19,9 @@ SKIP_BREW_INSTALL=0
 
 while (("$#")); do
   case "$1" in
-    --no-mas) NO_MAS=1 ;;
     --no-casks) NO_CASKS=1 ;;
     --no-formulae) NO_FORMULAE=1 ;;
-    --only-formulae) ONLY_FORMULAE=1; NO_CASKS=1; NO_MAS=1 ;;
+    --only-formulae) ONLY_FORMULAE=1; NO_CASKS=1 ;;
     --skip-brew-install) SKIP_BREW_INSTALL=1 ;;
     --debug) DEBUG=1 ;;
     --dry-run) DRY_RUN=1 ;;
@@ -32,7 +30,6 @@ while (("$#")); do
 mrk2 installer
 
 Usage: scripts/install [options]
-  --no-mas              Skip Mac App Store app installation
   --no-casks            Skip Homebrew cask installation (GUI apps)
   --no-formulae         Skip Homebrew formulae installation (CLI tools)
   --only-formulae       Only install Homebrew formulae (CLI tools)
@@ -92,7 +89,6 @@ fi
 BREW_INSTALLED=0
 FORMULAE_INSTALLED=0
 CASKS_INSTALLED=0
-MAS_APPS_INSTALLED=0
 ERRORS=0
 WARNINGS=0
 
@@ -159,45 +155,7 @@ ensure_brew_path() {
   fi
 }
 
-# Check if mas is installed
-check_mas() {
-  if command -v mas >/dev/null 2>&1; then
-    return 0
-  fi
-  return 1
-}
-
-# Install mas (Mac App Store CLI)
-install_mas() {
-  if check_mas; then
-    log "mas is already installed: $(mas version 2>/dev/null || echo 'unknown version')"
-    return 0
-  fi
-
-  if (( NO_MAS )); then
-    log "Skipping mas installation (--no-mas flag)"
-    return 0
-  fi
-
-  log "Installing mas (Mac App Store CLI)..."
-  if (( DRY_RUN )); then
-    dry "Would run: brew install mas"
-    return 0
-  fi
-
-  if ! ensure_brew_path; then
-    return 1
-  fi
-
-  if brew install mas; then
-    log "mas installed successfully"
-    return 0
-  else
-    warn "Failed to install mas. Mac App Store apps will be skipped."
-    ((WARNINGS++))
-    return 1
-  fi
-}
+# MAS (Mac App Store) support has been removed due to reliability issues
 
 # Read a single keypress, handling escape sequences for arrow keys
 # Returns: "UP", "DOWN", "SPACE", "ENTER", or the character pressed
@@ -292,11 +250,11 @@ read_key() {
 }
 
 # Interactive selection form for apps with arrow key navigation
-# Usage: interactive_selection "cask"|"mas" items_array selected_array
+# Usage: interactive_selection "cask"|"formula" items_array selected_array
 # items_array format: "name|line|id" for each item
 # Returns selected items in selected_array (associative array)
 interactive_selection() {
-  local type="$1"  # "cask" or "mas"
+  local type="$1"  # "cask" or "formula"
   local -n items="$2"  # array of items: "name|line|id"
   local -n selected="$3"  # associative array: selected[name]=1 if selected
   
@@ -546,8 +504,6 @@ interactive_selection() {
         printf "  Select Homebrew Casks to Install\n" > /dev/tty
       elif [[ "$type" == "formula" ]]; then
         printf "  Select Homebrew Formulae to Install\n" > /dev/tty
-      else
-        printf "  Select Mac App Store Apps to Install\n" > /dev/tty
       fi
       printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" > /dev/tty
       
@@ -767,7 +723,7 @@ install_brewfile() {
   if (( DRY_RUN )); then
     dry "Would run: brew bundle --file=\"$BREWFILE\""
     log "Brewfile contains:"
-    grep -E "^(brew|cask|mas|tap)" "$BREWFILE" | wc -l | xargs echo "  - Packages/casks/apps:"
+    grep -E "^(brew|cask|tap)" "$BREWFILE" | wc -l | xargs echo "  - Packages/casks:"
     return 0
   fi
 
@@ -778,20 +734,16 @@ install_brewfile() {
 
   local formulae_count=0
   local casks_count=0
-  local mas_count=0
   
   # Arrays to store items for selection
   local -a formula_items=()
   local -a cask_items=()
-  local -a mas_items=()
   # Associative arrays for selected items
   declare -A selected_formulae=()
   declare -A selected_casks=()
-  declare -A selected_mas=()
   # Map names to their Brewfile lines
   declare -A formula_lines=()
   declare -A cask_lines=()
-  declare -A mas_lines=()
 
   # First pass: collect all items and check installation status
   log "Scanning Brewfile for packages... (this may take a moment, please be patient)"
@@ -802,7 +754,7 @@ install_brewfile() {
       continue
     fi
 
-    # Handle formulae (now interactive like casks and MAS apps)
+    # Handle formulae (now interactive like casks)
     if [[ "$line" =~ ^brew\ \"([^\"]+)\" ]]; then
       local formula="${BASH_REMATCH[1]}"
       ((formulae_count++))
@@ -853,59 +805,8 @@ install_brewfile() {
       continue
     fi
 
-    # Handle MAS apps - with quotes
-    if [[ "$line" =~ ^mas\ \"([^\"]+)\",\ id:\ ([0-9]+) ]]; then
-      local app_name="${BASH_REMATCH[1]}"
-      local app_id="${BASH_REMATCH[2]}"
-      ((mas_count++))
-      
-      if (( NO_MAS )); then
-        continue
-      fi
-
-      # Check if already installed
-      local already_installed=0
-      if command -v mas >/dev/null 2>&1; then
-        if mas list 2>/dev/null | grep -q "^$app_id "; then
-          already_installed=1
-        fi
-      fi
-
-      # Add to selection list (even if already installed, so user can see all options)
-      if (( already_installed )); then
-        mas_items+=("$app_name|$line|$app_id|installed")
-      else
-        mas_items+=("$app_name|$line|$app_id|")
-      fi
-      mas_lines["$app_name"]="$line"
-      continue
-    fi
-
-    # Handle other MAS format (without quotes around name)
-    if [[ "$line" =~ ^mas\ ([^,]+),\ id:\ ([0-9]+) ]]; then
-      local app_name="${BASH_REMATCH[1]}"
-      local app_id="${BASH_REMATCH[2]}"
-      ((mas_count++))
-      
-      if (( NO_MAS )); then
-        continue
-      fi
-
-      # Check if already installed
-      local already_installed=0
-      if command -v mas >/dev/null 2>&1; then
-        if mas list 2>/dev/null | grep -q "^$app_id "; then
-          already_installed=1
-        fi
-      fi
-
-      # Add to selection list (even if already installed, so user can see all options)
-      if (( already_installed )); then
-        mas_items+=("$app_name|$line|$app_id|installed")
-      else
-        mas_items+=("$app_name|$line|$app_id|")
-      fi
-      mas_lines["$app_name"]="$line"
+    # Skip MAS apps (Mac App Store support removed due to reliability issues)
+    if [[ "$line" =~ ^mas[[:space:]] ]]; then
       continue
     fi
 
@@ -913,7 +814,7 @@ install_brewfile() {
     echo "$line" >> "$temp_brewfile"
   done < "$BREWFILE"
 
-  log "Found: ${#formula_items[@]} formulae to select, ${#cask_items[@]} casks to select, ${#mas_items[@]} MAS apps to select"
+  log "Found: ${#formula_items[@]} formulae to select, ${#cask_items[@]} casks to select"
 
   # Show interactive selection for formulae
   if (( ${#formula_items[@]} > 0 )) && (( ! NO_FORMULAE )); then
@@ -960,41 +861,6 @@ install_brewfile() {
     done
     CASKS_INSTALLED=$selected_count
     log "Selected $selected_count/${#cask_items[@]} casks for installation"
-  fi
-
-  # Show interactive selection for MAS apps
-  if (( ${#mas_items[@]} > 0 )) && (( ! NO_MAS )); then
-    interactive_selection "mas" mas_items selected_mas
-    
-    # Add selected MAS apps to temp Brewfile (skip already installed ones)
-    local selected_count=0
-    for name in "${!selected_mas[@]}"; do
-      if (( selected_mas["$name"] == 1 )); then
-        # Find the app_id from mas_items to check if installed
-        local app_id=""
-        for item_data in "${mas_items[@]}"; do
-          if [[ "$item_data" =~ ^$name\| ]]; then
-            # Extract app_id (third field)
-            local fields=(${item_data//|/ })
-            app_id="${fields[2]}"
-            break
-          fi
-        done
-        
-        # Check if already installed - skip if so
-        if [[ -n "$app_id" ]] && command -v mas >/dev/null 2>&1; then
-          if mas list 2>/dev/null | grep -q "^$app_id "; then
-            log "MAS app '$name' (id: $app_id) is already installed, skipping installation"
-            continue
-          fi
-        fi
-        
-        echo "${mas_lines[$name]}" >> "$temp_brewfile"
-        ((selected_count++))
-      fi
-    done
-    MAS_APPS_INSTALLED=$selected_count
-    log "Selected $selected_count/${#mas_items[@]} MAS apps for installation"
   fi
 
   # Install from temporary Brewfile
@@ -1051,12 +917,7 @@ main() {
     exit 1
   fi
 
-  # Phase 2: Install mas (if needed)
-  if (( ! NO_MAS )); then
-    install_mas || warn "mas installation failed, continuing without MAS apps"
-  fi
-
-  # Phase 3: Install from Brewfile
+  # Phase 2: Install from Brewfile
   if ! install_brewfile; then
     err "Failed to install packages from Brewfile"
     ((ERRORS++))
@@ -1087,10 +948,6 @@ show_summary() {
   
   if (( CASKS_INSTALLED > 0 )); then
     echo "  ✓ Casks installed: ~$CASKS_INSTALLED"
-  fi
-  
-  if (( MAS_APPS_INSTALLED > 0 )); then
-    echo "  ✓ Mac App Store apps installed: ~$MAS_APPS_INSTALLED"
   fi
   
   if (( ERRORS > 0 )); then
