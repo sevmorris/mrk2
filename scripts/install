@@ -269,6 +269,50 @@ interactive_selection() {
     return 0
   fi
   
+  # Check if terminal supports colors
+  local colors_supported=0
+  if tput colors >/dev/null 2>&1 && (( $(tput colors 2>/dev/null || echo 0) >= 8 )); then
+    colors_supported=1
+  fi
+  
+  # Color definitions (using tput for portability)
+  # If colors aren't supported, these will be empty strings
+  local color_reset=""
+  local color_bold=""
+  local color_underline=""
+  local color_reverse=""
+  local color_white=""
+  local color_cyan=""
+  local color_green=""
+  local color_yellow=""
+  local color_blue=""
+  local color_magenta=""
+  local color_red=""
+  local bg_cyan=""
+  local bg_blue=""
+  local bg_green=""
+  
+  if (( colors_supported )); then
+    color_reset=$(tput sgr0 2>/dev/null || echo "")
+    color_bold=$(tput bold 2>/dev/null || echo "")
+    color_underline=$(tput smul 2>/dev/null || echo "")
+    color_reverse=$(tput rev 2>/dev/null || echo "")
+    
+    # Colors
+    color_white=$(tput setaf 7 2>/dev/null || echo "")
+    color_cyan=$(tput setaf 6 2>/dev/null || echo "")
+    color_green=$(tput setaf 2 2>/dev/null || echo "")
+    color_yellow=$(tput setaf 3 2>/dev/null || echo "")
+    color_blue=$(tput setaf 4 2>/dev/null || echo "")
+    color_magenta=$(tput setaf 5 2>/dev/null || echo "")
+    color_red=$(tput setaf 1 2>/dev/null || echo "")
+    
+    # Background colors
+    bg_cyan=$(tput setab 6 2>/dev/null || echo "")
+    bg_blue=$(tput setab 4 2>/dev/null || echo "")
+    bg_green=$(tput setab 2 2>/dev/null || echo "")
+  fi
+  
   # Save terminal state and set up cleanup trap
   local old_stty
   old_stty=$(stty -g 2>/dev/null)
@@ -344,7 +388,7 @@ interactive_selection() {
   local prev_page_start=0
   local done=0
   local needs_full_redraw=1
-  local header_lines=5  # Number of lines before the item list (header + stats)
+  local header_lines=6  # Number of lines before the item list (borders + header + stats)
   
   # Calculate maximum item name length for column width
   # Set a fixed maximum width to prevent wrapping with different window sizes
@@ -439,28 +483,45 @@ interactive_selection() {
       display_name="${name:0:$((max_name_display_len - 3))}..."
     fi
     
-    if (( is_cursor )); then
-      printf "▶ %s %s%s" "$checkbox" "$display_name" "$status_marker"
+    # Apply colors based on state
+    local checkbox_color=""
+    local name_color=""
+    local status_color=""
+    
+    if (( selected["$name"] == 1 )); then
+      checkbox_color="${color_green}"
+      name_color="${color_bold}${color_green}"
     else
-      printf "  %s %s%s" "$checkbox" "$display_name" "$status_marker"
+      checkbox_color="${color_white}"
+      name_color="${color_white}"
+    fi
+    
+    if [[ -n "$status_marker" ]]; then
+      status_color="${color_yellow}"
+    fi
+    
+    if (( is_cursor )); then
+      # Cursor: use reverse video for emphasis
+      printf "${color_reverse}▶${color_reset} ${checkbox_color}%s${color_reset} ${name_color}%s${color_reset}${status_color}%s${color_reset}" \
+        "$checkbox" "$display_name" "$status_marker"
+    else
+      printf "  ${checkbox_color}%s${color_reset} ${name_color}%s${color_reset}${status_color}%s${color_reset}" \
+        "$checkbox" "$display_name" "$status_marker"
     fi
   }
   
-  # Function to update a single row
-  update_row() {
+  # Function to build a row's content (returns the line string)
+  build_row_content() {
     local row=$1
-    local line_num=$((header_lines + row + 1))
-    
-    # Move cursor to the row and clear the entire line first
-    tput cup $line_num 0 > /dev/tty 2>/dev/null || return
-    tput el > /dev/tty 2>/dev/null  # Clear to end of line
+    local cursor_col_pos=$2
+    local cursor_row_pos=$3
     
     # Build the line
     local col=0
-    local line=""
+    local line_content=""
     while (( col < num_cols )); do
       local is_cursor=0
-      if (( col == cursor_col && row == cursor_row )); then
+      if (( col == cursor_col_pos && row == cursor_row_pos )); then
         is_cursor=1
       fi
       
@@ -469,19 +530,28 @@ interactive_selection() {
         # Pad to column width
         local padding=$((col_width - ${#item_str}))
         item_str="${item_str}$(printf '%*s' "$padding" '')"
-        line="${line}${item_str}"
+        line_content="${line_content}${item_str}"
       else
         # Empty cell
-        line="${line}$(printf '%*s' "$col_width" '')"
+        line_content="${line_content}$(printf '%*s' "$col_width" '')"
       fi
       ((col++))
     done
     
-    # Print the line (trim trailing spaces)
-    # Note: Items have 2 spaces of padding at the start for alignment
-    printf "  %s" "${line%"${line##*[![:space:]]}"}" > /dev/tty
-    # Ensure we're at the end and clear any remaining characters
-    tput el > /dev/tty 2>/dev/null
+    # Return the line (trim trailing spaces)
+    echo "  ${line_content%"${line_content##*[![:space:]]}"}"
+  }
+  
+  # Function to update a single row (for full redraw)
+  update_row() {
+    local row=$1
+    local line_content=$(build_row_content $row $cursor_col $cursor_row)
+    printf "%s" "$line_content" > /dev/tty
+  }
+  
+  # Function to get box width for calculations
+  get_box_width() {
+    echo $((col_width * num_cols + 6))
   }
   
   # Function to redraw the screen (full or incremental)
@@ -499,13 +569,32 @@ interactive_selection() {
       # Full redraw - clear screen and start from top
       tput clear > /dev/tty 2>/dev/null || clear > /dev/tty
       
-      printf "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" > /dev/tty
+      # Calculate box width (4 columns + borders)
+      local box_width=$((col_width * num_cols + 6))  # 6 for borders and padding
+      
+      # Draw top border (cyan)
+      printf "\n${color_cyan}┌" > /dev/tty
+      printf "%*s" $((box_width - 2)) "" | tr ' ' '─' > /dev/tty
+      printf "┐${color_reset}\n" > /dev/tty
+      
+      # Title line (bold cyan on blue background)
+      local title=""
       if [[ "$type" == "cask" ]]; then
-        printf "  Select Homebrew Casks to Install\n" > /dev/tty
+        title=" Select Homebrew Casks to Install "
       elif [[ "$type" == "formula" ]]; then
-        printf "  Select Homebrew Formulae to Install\n" > /dev/tty
+        title=" Select Homebrew Formulae to Install "
       fi
-      printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" > /dev/tty
+      local title_padding=$(( (box_width - ${#title} - 2) / 2 ))
+      printf "${color_cyan}│${color_reset}" > /dev/tty
+      printf "%*s" $title_padding "" > /dev/tty
+      printf "${color_bold}${bg_blue}${color_white}%s${color_reset}" "$title" > /dev/tty
+      printf "%*s" $((box_width - ${#title} - title_padding - 2)) "" > /dev/tty
+      printf "${color_cyan}│${color_reset}\n" > /dev/tty
+      
+      # Separator line (cyan)
+      printf "${color_cyan}├" > /dev/tty
+      printf "%*s" $((box_width - 2)) "" | tr ' ' '─' > /dev/tty
+      printf "┤${color_reset}\n" > /dev/tty
       
       # Count selected
       local selected_count=0
@@ -519,37 +608,88 @@ interactive_selection() {
       if (( page_end > total )); then
         page_end=$total
       fi
-      printf "  Selected: %d/%d  (Showing items %d-%d)\n\n" "$selected_count" "$total" "$((page_start+1))" "$page_end" > /dev/tty
       
-      # Display all items
+      # Stats line (with colors)
+      local stats_label="${color_bold}${color_cyan}Selected:${color_reset}"
+      local stats_value="${color_bold}${color_green}$selected_count${color_reset}${color_white}/$total${color_reset}"
+      local stats_separator="${color_cyan}│${color_reset}"
+      local page_label="${color_bold}${color_cyan}Showing:${color_reset}"
+      local page_value="${color_bold}${color_white}$((page_start+1))-$page_end${color_reset}"
+      local stats="${stats_label} ${stats_value}  ${stats_separator}  ${page_label} ${page_value}"
+      printf "${color_cyan}│${color_reset} %-*s ${color_cyan}│${color_reset}\n" $((box_width - 4)) "$stats" > /dev/tty
+      
+      # Separator line (cyan)
+      printf "${color_cyan}├" > /dev/tty
+      printf "%*s" $((box_width - 2)) "" | tr ' ' '─' > /dev/tty
+      printf "┤${color_reset}\n" > /dev/tty
+      
+      # Display all items with side borders (cyan)
       local row=0
       while (( row < num_rows )); do
-        update_row $row
-        printf "\n" > /dev/tty
+        printf "${color_cyan}│${color_reset} " > /dev/tty
+        local line_content=$(build_row_content $row $cursor_col $cursor_row)
+        printf "%s" "$line_content" > /dev/tty
+        # Calculate remaining space and pad
+        local current_line_len=$((${#line_content} + 3))
+        if (( current_line_len < box_width - 1 )); then
+          printf "%*s" $((box_width - current_line_len - 1)) "" > /dev/tty
+        fi
+        printf "${color_cyan}│${color_reset}\n" > /dev/tty
         ((row++))
       done
       
-      printf "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" > /dev/tty
-      # Print menu at column 0 (left-aligned, no padding)
-      # Use tput to ensure we're at the start of the line
-      tput cr > /dev/tty 2>/dev/null
-      printf "↑/↓: Navigate column  ←/→: Navigate row  Space: Toggle  d: Done  a: All  n: None  q: Quit" > /dev/tty
-      # Clear to end of line to remove any trailing characters
-      tput el > /dev/tty 2>/dev/null
+      # Bottom border (cyan)
+      printf "${color_cyan}└" > /dev/tty
+      printf "%*s" $((box_width - 2)) "" | tr ' ' '─' > /dev/tty
+      printf "┘${color_reset}\n" > /dev/tty
+      
+      # Controls line (outside box, with colors)
       printf "\n" > /dev/tty
+      local ctrl_keys="${color_bold}${color_cyan}↑/↓${color_reset}${color_white}: Navigate column${color_reset}"
+      local ctrl_sep="${color_cyan}│${color_reset}"
+      local ctrl_lr="${color_bold}${color_cyan}←/→${color_reset}${color_white}: Navigate row${color_reset}"
+      local ctrl_space="${color_bold}${color_green}Space${color_reset}${color_white}: Toggle${color_reset}"
+      local ctrl_done="${color_bold}${color_green}d${color_reset}${color_white}: Done${color_reset}"
+      local ctrl_all="${color_bold}${color_yellow}a${color_reset}${color_white}: All${color_reset}"
+      local ctrl_none="${color_bold}${color_yellow}n${color_reset}${color_white}: None${color_reset}"
+      local ctrl_quit="${color_bold}${color_red}q${color_reset}${color_white}: Quit${color_reset}"
+      printf "%s  %s  %s  %s  %s  %s  %s  %s  %s  %s  %s  %s  %s\n" \
+        "$ctrl_keys" "$ctrl_sep" "$ctrl_lr" "$ctrl_sep" "$ctrl_space" "$ctrl_sep" \
+        "$ctrl_done" "$ctrl_sep" "$ctrl_all" "$ctrl_sep" "$ctrl_none" "$ctrl_sep" "$ctrl_quit" > /dev/tty
       
       needs_full_redraw=0
       prev_page_start=$page_start
     else
       # Incremental update: only update the rows that changed
       if (( prev_cursor_row != cursor_row || prev_cursor_col != cursor_col )); then
+        local box_width=$(get_box_width)
         # Update previous cursor position (removes cursor indicator)
         if (( prev_cursor_row < num_rows )); then
-          update_row $prev_cursor_row
+          local line_num=$((header_lines + prev_cursor_row + 1))
+          tput cup $line_num 0 > /dev/tty 2>/dev/null || return
+          tput el > /dev/tty 2>/dev/null
+          local line_content=$(build_row_content $prev_cursor_row $prev_cursor_col $prev_cursor_row)
+          printf "${color_cyan}│${color_reset} %s" "$line_content" > /dev/tty
+          local current_line_len=$((${#line_content} + 3))
+          if (( current_line_len < box_width - 1 )); then
+            printf "%*s" $((box_width - current_line_len - 1)) "" > /dev/tty
+          fi
+          printf "${color_cyan}│${color_reset}" > /dev/tty
+          tput el > /dev/tty 2>/dev/null
         fi
         # Update new cursor position (adds cursor indicator)
         if (( cursor_row < num_rows )); then
-          update_row $cursor_row
+          local line_num=$((header_lines + cursor_row + 1))
+          tput cup $line_num 0 > /dev/tty 2>/dev/null || return
+          tput el > /dev/tty 2>/dev/null
+          local line_content=$(build_row_content $cursor_row $cursor_col $cursor_row)
+          printf "${color_cyan}│${color_reset} %s" "$line_content" > /dev/tty
+          local current_line_len=$((${#line_content} + 3))
+          if (( current_line_len < box_width - 1 )); then
+            printf "%*s" $((box_width - current_line_len - 1)) "" > /dev/tty
+          fi
+          printf "${color_cyan}│${color_reset}" > /dev/tty
+          tput el > /dev/tty 2>/dev/null
         fi
       fi
     fi
@@ -639,8 +779,18 @@ interactive_selection() {
                 selected["$name"]=1
               fi
               # Update just this row
-              update_row $cursor_row
-              printf "\n" > /dev/tty
+              local line_num=$((header_lines + cursor_row + 1))
+              tput cup $line_num 0 > /dev/tty 2>/dev/null || return
+              tput el > /dev/tty 2>/dev/null
+              local box_width=$(get_box_width)
+              local line_content=$(build_row_content $cursor_row $cursor_col $cursor_row)
+              printf "${color_cyan}│${color_reset} %s" "$line_content" > /dev/tty
+              local current_line_len=$((${#line_content} + 3))
+              if (( current_line_len < box_width - 1 )); then
+                printf "%*s" $((box_width - current_line_len - 1)) "" > /dev/tty
+              fi
+              printf "${color_cyan}│${color_reset}" > /dev/tty
+              tput el > /dev/tty 2>/dev/null
               break
             fi
             ((item_idx++))
