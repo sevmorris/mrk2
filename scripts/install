@@ -416,6 +416,7 @@ interactive_selection() {
   local col_width=$((max_name_len + 2))  # Add spacing between columns
   
   # Calculate minimum terminal width needed (4 columns + padding)
+  # This needs to be available to redraw_screen, so define it early
   local min_terminal_width=$((col_width * num_cols + 4))  # 4 for item row padding
   
   # Function to get terminal width
@@ -557,9 +558,12 @@ interactive_selection() {
   # Function to redraw the screen (full or incremental)
   redraw_screen() {
     # Check terminal width and warn if too narrow
+    # Note: min_terminal_width is defined in the parent scope
     local term_width
     term_width=$(get_terminal_width)
-    if (( term_width < min_terminal_width )); then
+    # Use default if min_terminal_width isn't set (shouldn't happen, but safety check)
+    local min_width=${min_terminal_width:-80}
+    if (( term_width < min_width )); then
       # Terminal is too narrow, but we'll still try to display
       # The fixed column width should prevent wrapping
       :
