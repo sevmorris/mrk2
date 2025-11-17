@@ -196,35 +196,136 @@ install_mas() {
   fi
 }
 
-# Prompt for yes/no with default "No"
-# Usage: prompt_yes_no "message" -> returns 0 for yes, 1 for no
-prompt_yes_no() {
-  local prompt_msg="$1"
-  local response
+# Interactive selection form for apps
+# Usage: interactive_selection "cask"|"mas" items_array selected_array
+# items_array format: "name|line|id" for each item
+# Returns selected items in selected_array (associative array)
+interactive_selection() {
+  local type="$1"  # "cask" or "mas"
+  local -n items="$2"  # array of items: "name|line|id"
+  local -n selected="$3"  # associative array: selected[name]=1 if selected
   
-  # Only prompt if we have a TTY (interactive terminal)
+  # Only show selection if we have a TTY
   if [[ ! -t 0 ]]; then
-    # Non-interactive, default to no
-    return 1
+    # Non-interactive, select nothing
+    return 0
   fi
   
-  # Write prompt directly to /dev/tty to bypass log redirection
-  # Read from /dev/tty to get user input
-  while true; do
-    printf "%s [y/N]: " "$prompt_msg" > /dev/tty
-    read -r response < /dev/tty
-    case "$response" in
-      [Yy]|[Yy][Ee][Ss])
-        return 0
+  local total=${#items[@]}
+  if (( total == 0 )); then
+    return 0
+  fi
+  
+  # Initialize all as unselected
+  local i
+  for i in "${!items[@]}"; do
+    local item_data="${items[$i]}"
+    local name="${item_data%%|*}"
+    selected["$name"]=0
+  done
+  
+  local done=0
+  local show_help=1
+  
+  while (( ! done )); do
+    # Clear screen and show list
+    clear > /dev/tty
+    printf "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" > /dev/tty
+    if [[ "$type" == "cask" ]]; then
+      printf "  Select Homebrew Casks to Install\n" > /dev/tty
+    else
+      printf "  Select Mac App Store Apps to Install\n" > /dev/tty
+    fi
+    printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" > /dev/tty
+    
+    # Count selected
+    local selected_count=0
+    for name in "${!selected[@]}"; do
+      if (( selected["$name"] == 1 )); then
+        ((selected_count++))
+      fi
+    done
+    
+    printf "  Selected: %d/%d\n\n" "$selected_count" "$total" > /dev/tty
+    
+    # Display items
+    local idx=1
+    for i in "${!items[@]}"; do
+      local item_data="${items[$i]}"
+      local name="${item_data%%|*}"
+      local check=" "
+      
+      if (( selected["$name"] == 1 )); then
+        check="√"
+      fi
+      
+      printf "  [%3d] %s %s\n" "$idx" "$check" "$name" > /dev/tty
+      ((idx++))
+    done
+    
+    printf "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" > /dev/tty
+    
+    if (( show_help )); then
+      printf "\n  Commands:\n" > /dev/tty
+      printf "    <number>     - Toggle selection for item number\n" > /dev/tty
+      printf "    all          - Select all items\n" > /dev/tty
+      printf "    none         - Deselect all items\n" > /dev/tty
+      printf "    done/enter    - Finish selection and install\n" > /dev/tty
+      printf "    help         - Show this help\n" > /dev/tty
+      show_help=0
+    fi
+    
+    printf "\n  Enter command or number: " > /dev/tty
+    read -r input < /dev/tty
+    
+    case "$input" in
+      ""|done|d)
+        done=1
         ;;
-      [Nn]|[Nn][Oo]|"")
-        return 1
+      all|a)
+        for name in "${!selected[@]}"; do
+          selected["$name"]=1
+        done
+        ;;
+      none|n)
+        for name in "${!selected[@]}"; do
+          selected["$name"]=0
+        done
+        ;;
+      help|h|?)
+        show_help=1
+        ;;
+      [0-9]*)
+        local num=$((input))
+        if (( num >= 1 && num <= total )); then
+          local idx=1
+          for i in "${!items[@]}"; do
+            if (( idx == num )); then
+              local item_data="${items[$i]}"
+              local name="${item_data%%|*}"
+              # Toggle selection
+              if (( selected["$name"] == 1 )); then
+                selected["$name"]=0
+              else
+                selected["$name"]=1
+              fi
+              break
+            fi
+            ((idx++))
+          done
+        else
+          printf "  Invalid number. Please enter 1-%d\n" "$total" > /dev/tty
+          sleep 1
+        fi
         ;;
       *)
-        echo "Please answer yes (y) or no (n)." > /dev/tty
+        printf "  Invalid command. Type 'help' for commands or a number to toggle.\n" > /dev/tty
+        sleep 1
         ;;
     esac
   done
+  
+  clear > /dev/tty
 }
 
 # Install packages from Brewfile
@@ -247,7 +348,7 @@ install_brewfile() {
     return 0
   fi
 
-  # Parse Brewfile and build installation lists
+  # Parse Brewfile and collect items
   local temp_brewfile
   temp_brewfile=$(mktemp /tmp/mrk2-brewfile.XXXXXX)
   trap "rm -f '$temp_brewfile'" EXIT
@@ -255,10 +356,19 @@ install_brewfile() {
   local formulae_count=0
   local casks_count=0
   local mas_count=0
-  local selected_casks=0
-  local selected_mas=0
+  
+  # Arrays to store items for selection
+  local -a cask_items=()
+  local -a mas_items=()
+  # Associative arrays for selected items
+  declare -A selected_casks=()
+  declare -A selected_mas=()
+  # Map names to their Brewfile lines
+  declare -A cask_lines=()
+  declare -A mas_lines=()
 
-  # Process each line of the Brewfile once
+  # First pass: collect all items and check installation status
+  log "Scanning Brewfile for packages..."
   while IFS= read -r line || [[ -n "$line" ]]; do
     # Copy taps, comments, and blank lines directly
     if [[ "$line" =~ ^tap\  ]] || [[ "$line" =~ ^# ]] || [[ -z "$line" ]]; then
@@ -274,7 +384,7 @@ install_brewfile() {
       continue
     fi
 
-    # Handle casks (interactive prompt)
+    # Handle casks
     if [[ "$line" =~ ^cask\ \"([^\"]+)\" ]]; then
       local cask="${BASH_REMATCH[1]}"
       ((casks_count++))
@@ -287,25 +397,17 @@ install_brewfile() {
       local already_installed=0
       if brew list --cask "$cask" >/dev/null 2>&1; then
         already_installed=1
-      fi
-
-      if (( already_installed )); then
         log "Cask '$cask' is already installed, skipping"
         continue
       fi
 
-      # Prompt user
-      if prompt_yes_no "Install cask: $cask?"; then
-        echo "$line" >> "$temp_brewfile"
-        ((selected_casks++))
-        log "Selected: $cask"
-      else
-        log "Skipped: $cask"
-      fi
+      # Add to selection list
+      cask_items+=("$cask|$line")
+      cask_lines["$cask"]="$line"
       continue
     fi
 
-    # Handle MAS apps (interactive prompt) - with quotes
+    # Handle MAS apps - with quotes
     if [[ "$line" =~ ^mas\ \"([^\"]+)\",\ id:\ ([0-9]+) ]]; then
       local app_name="${BASH_REMATCH[1]}"
       local app_id="${BASH_REMATCH[2]}"
@@ -315,28 +417,19 @@ install_brewfile() {
         continue
       fi
 
-      # Check if already installed (mas list shows installed apps)
+      # Check if already installed
       local already_installed=0
       if command -v mas >/dev/null 2>&1; then
-        # Suppress the Spotlight warning from mas list
         if mas list 2>/dev/null | grep -q "^$app_id "; then
           already_installed=1
+          log "MAS app '$app_name' (id: $app_id) is already installed, skipping"
+          continue
         fi
       fi
 
-      if (( already_installed )); then
-        log "MAS app '$app_name' (id: $app_id) is already installed, skipping"
-        continue
-      fi
-
-      # Prompt user
-      if prompt_yes_no "Install MAS app: $app_name (id: $app_id)?"; then
-        echo "$line" >> "$temp_brewfile"
-        ((selected_mas++))
-        log "Selected: $app_name"
-      else
-        log "Skipped: $app_name"
-      fi
+      # Add to selection list
+      mas_items+=("$app_name|$line|$app_id")
+      mas_lines["$app_name"]="$line"
       continue
     fi
 
@@ -353,25 +446,16 @@ install_brewfile() {
       # Check if already installed
       local already_installed=0
       if command -v mas >/dev/null 2>&1; then
-        # Suppress the Spotlight warning from mas list
         if mas list 2>/dev/null | grep -q "^$app_id "; then
           already_installed=1
+          log "MAS app '$app_name' (id: $app_id) is already installed, skipping"
+          continue
         fi
       fi
 
-      if (( already_installed )); then
-        log "MAS app '$app_name' (id: $app_id) is already installed, skipping"
-        continue
-      fi
-
-      # Prompt user
-      if prompt_yes_no "Install MAS app: $app_name (id: $app_id)?"; then
-        echo "$line" >> "$temp_brewfile"
-        ((selected_mas++))
-        log "Selected: $app_name"
-      else
-        log "Skipped: $app_name"
-      fi
+      # Add to selection list
+      mas_items+=("$app_name|$line|$app_id")
+      mas_lines["$app_name"]="$line"
       continue
     fi
 
@@ -379,23 +463,46 @@ install_brewfile() {
     echo "$line" >> "$temp_brewfile"
   done < "$BREWFILE"
 
-  log "Found: $formulae_count formulae, $casks_count casks, $mas_count MAS apps"
-  if (( ! NO_CASKS )); then
-    log "Selected: $selected_casks/$casks_count casks"
+  log "Found: $formulae_count formulae, ${#cask_items[@]} casks to select, ${#mas_items[@]} MAS apps to select"
+
+  # Show interactive selection for casks
+  if (( ${#cask_items[@]} > 0 )) && (( ! NO_CASKS )); then
+    interactive_selection "cask" cask_items selected_casks
+    
+    # Add selected casks to temp Brewfile
+    local selected_count=0
+    for name in "${!selected_casks[@]}"; do
+      if (( selected_casks["$name"] == 1 )); then
+        echo "${cask_lines[$name]}" >> "$temp_brewfile"
+        ((selected_count++))
+      fi
+    done
+    CASKS_INSTALLED=$selected_count
+    log "Selected $selected_count/${#cask_items[@]} casks for installation"
   fi
-  if (( ! NO_MAS )); then
-    log "Selected: $selected_mas/$mas_count MAS apps"
+
+  # Show interactive selection for MAS apps
+  if (( ${#mas_items[@]} > 0 )) && (( ! NO_MAS )); then
+    interactive_selection "mas" mas_items selected_mas
+    
+    # Add selected MAS apps to temp Brewfile
+    local selected_count=0
+    for name in "${!selected_mas[@]}"; do
+      if (( selected_mas["$name"] == 1 )); then
+        echo "${mas_lines[$name]}" >> "$temp_brewfile"
+        ((selected_count++))
+      fi
+    done
+    MAS_APPS_INSTALLED=$selected_count
+    log "Selected $selected_count/${#mas_items[@]} MAS apps for installation"
   fi
+
+  FORMULAE_INSTALLED=$formulae_count
 
   # Install from temporary Brewfile
   log "Installing selected packages..."
   if brew bundle --file="$temp_brewfile"; then
     log "Brewfile installation completed successfully"
-    
-    FORMULAE_INSTALLED=$formulae_count
-    CASKS_INSTALLED=$selected_casks
-    MAS_APPS_INSTALLED=$selected_mas
-    
     return 0
   else
     err "Brewfile installation failed"
