@@ -448,6 +448,7 @@ interactive_selection() {
     local prefix_len=6  # "▶ [√] " or "  [ ] " (6 chars including space after checkbox)
     local status_len=${#status_marker}
     # Use fixed width - allow up to 30 chars for name + status
+    # Note: col_width is defined in parent scope, use it directly
     local max_name_display_len=$((30 - status_len))
     
     # Truncate name if it's too long
@@ -513,9 +514,10 @@ interactive_selection() {
     fi
     
     # Calculate available width for the name
-    local prefix_len=5  # "▶ [√] " or "  [ ] "
+    local prefix_len=6  # "▶ [√] " or "  [ ] " (6 chars including space after checkbox)
     local status_len=${#status_marker}
-    local max_name_display_len=$((max_allowed_width - prefix_len - status_len))
+    # Use fixed width - allow up to 30 chars for name + status
+    local max_name_display_len=$((30 - status_len))
     
     # Truncate name if it's too long
     local display_name="$name"
