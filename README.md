@@ -22,9 +22,11 @@ make fix-exec && make install
 ## What it installs
 
 - **Homebrew** (if not already installed)
-- **CLI tools** from the Brewfile (ripgrep, shellcheck, languages, etc.)
-- **Applications** via Homebrew Casks (browsers, editors, utilities, etc.)
-- **Mac App Store apps** via `mas` (Final Cut Pro, Logic Pro, etc.)
+- **CLI tools** from the Brewfile (ripgrep, shellcheck, languages, etc.) — installed automatically
+- **Applications** via Homebrew Casks (browsers, editors, utilities, etc.) — **interactive selection**
+- **Mac App Store apps** via `mas` (Final Cut Pro, Logic Pro, etc.) — **interactive selection**
+
+> **Note:** Casks and Mac App Store apps are presented interactively for selection. Press ENTER (defaults to "No") or type "n" to skip, or type "y" to install. CLI tools (formulae) are installed automatically without prompts.
 
 ---
 
@@ -52,18 +54,20 @@ make doctor       # run Homebrew doctor
 # Preview changes without applying
 ./scripts/install --dry-run
 
-# Skip Mac App Store apps
+# Skip Mac App Store apps (no interactive prompts)
 ./scripts/install --no-mas
 
-# Skip Homebrew casks (GUI apps)
+# Skip Homebrew casks (no interactive prompts)
 ./scripts/install --no-casks
 
-# Only install Homebrew packages (no casks, no MAS)
+# Only install Homebrew packages (no casks, no MAS, fully automated)
 ./scripts/install --only-formulae
 
 # See all options
 ./scripts/install --help
 ```
+
+**Interactive Mode:** By default, the installer will prompt you for each Cask and Mac App Store app. Press ENTER or type "n" to skip (default), or type "y" to install. CLI tools (formulae) are always installed automatically.
 
 ### Check Installation Status
 

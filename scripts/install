@@ -194,6 +194,34 @@ install_mas() {
   fi
 }
 
+# Prompt for yes/no with default "No"
+# Usage: prompt_yes_no "message" -> returns 0 for yes, 1 for no
+prompt_yes_no() {
+  local prompt_msg="$1"
+  local response
+  
+  # Only prompt if we have a TTY (interactive terminal)
+  if [[ ! -t 0 ]]; then
+    # Non-interactive, default to no
+    return 1
+  fi
+  
+  while true; do
+    read -r -p "$prompt_msg [y/N]: " response
+    case "$response" in
+      [Yy]|[Yy][Ee][Ss])
+        return 0
+        ;;
+      [Nn]|[Nn][Oo]|"")
+        return 1
+        ;;
+      *)
+        echo "Please answer yes (y) or no (n)." >&2
+        ;;
+    esac
+  done
+}
+
 # Install packages from Brewfile
 install_brewfile() {
   if [[ ! -f "$BREWFILE" ]]; then
@@ -214,46 +242,152 @@ install_brewfile() {
     return 0
   fi
 
-  # Count what we're installing
+  # Parse Brewfile and build installation lists
+  local temp_brewfile
+  temp_brewfile=$(mktemp /tmp/mrk2-brewfile.XXXXXX)
+  trap "rm -f '$temp_brewfile'" EXIT
+
   local formulae_count=0
   local casks_count=0
   local mas_count=0
+  local selected_casks=0
+  local selected_mas=0
 
-  if (( ! NO_CASKS )); then
-    casks_count=$(grep -c "^cask " "$BREWFILE" 2>/dev/null || echo 0)
-  fi
+  # Process each line of the Brewfile once
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # Copy taps, comments, and blank lines directly
+    if [[ "$line" =~ ^tap\  ]] || [[ "$line" =~ ^# ]] || [[ -z "$line" ]]; then
+      echo "$line" >> "$temp_brewfile"
+      continue
+    fi
 
-  if (( ! NO_MAS )); then
-    mas_count=$(grep -c "^mas " "$BREWFILE" 2>/dev/null || echo 0)
-  fi
+    # Handle formulae (install automatically, no prompt)
+    if [[ "$line" =~ ^brew\ \"([^\"]+)\" ]]; then
+      local formula="${BASH_REMATCH[1]}"
+      echo "$line" >> "$temp_brewfile"
+      ((formulae_count++))
+      continue
+    fi
 
-  formulae_count=$(grep -c "^brew " "$BREWFILE" 2>/dev/null || echo 0)
+    # Handle casks (interactive prompt)
+    if [[ "$line" =~ ^cask\ \"([^\"]+)\" ]]; then
+      local cask="${BASH_REMATCH[1]}"
+      ((casks_count++))
+      
+      if (( NO_CASKS )); then
+        continue
+      fi
+
+      # Check if already installed
+      local already_installed=0
+      if brew list --cask "$cask" >/dev/null 2>&1; then
+        already_installed=1
+      fi
+
+      if (( already_installed )); then
+        log "Cask '$cask' is already installed, skipping"
+        continue
+      fi
+
+      # Prompt user
+      if prompt_yes_no "Install cask: $cask?"; then
+        echo "$line" >> "$temp_brewfile"
+        ((selected_casks++))
+        log "Selected: $cask"
+      else
+        log "Skipped: $cask"
+      fi
+      continue
+    fi
+
+    # Handle MAS apps (interactive prompt) - with quotes
+    if [[ "$line" =~ ^mas\ \"([^\"]+)\",\ id:\ ([0-9]+) ]]; then
+      local app_name="${BASH_REMATCH[1]}"
+      local app_id="${BASH_REMATCH[2]}"
+      ((mas_count++))
+      
+      if (( NO_MAS )); then
+        continue
+      fi
+
+      # Check if already installed (mas list shows installed apps)
+      local already_installed=0
+      if command -v mas >/dev/null 2>&1; then
+        if mas list | grep -q "^$app_id "; then
+          already_installed=1
+        fi
+      fi
+
+      if (( already_installed )); then
+        log "MAS app '$app_name' (id: $app_id) is already installed, skipping"
+        continue
+      fi
+
+      # Prompt user
+      if prompt_yes_no "Install MAS app: $app_name (id: $app_id)?"; then
+        echo "$line" >> "$temp_brewfile"
+        ((selected_mas++))
+        log "Selected: $app_name"
+      else
+        log "Skipped: $app_name"
+      fi
+      continue
+    fi
+
+    # Handle other MAS format (without quotes around name)
+    if [[ "$line" =~ ^mas\ ([^,]+),\ id:\ ([0-9]+) ]]; then
+      local app_name="${BASH_REMATCH[1]}"
+      local app_id="${BASH_REMATCH[2]}"
+      ((mas_count++))
+      
+      if (( NO_MAS )); then
+        continue
+      fi
+
+      # Check if already installed
+      local already_installed=0
+      if command -v mas >/dev/null 2>&1; then
+        if mas list | grep -q "^$app_id "; then
+          already_installed=1
+        fi
+      fi
+
+      if (( already_installed )); then
+        log "MAS app '$app_name' (id: $app_id) is already installed, skipping"
+        continue
+      fi
+
+      # Prompt user
+      if prompt_yes_no "Install MAS app: $app_name (id: $app_id)?"; then
+        echo "$line" >> "$temp_brewfile"
+        ((selected_mas++))
+        log "Selected: $app_name"
+      else
+        log "Skipped: $app_name"
+      fi
+      continue
+    fi
+
+    # Copy any other lines we don't recognize (for future compatibility)
+    echo "$line" >> "$temp_brewfile"
+  done < "$BREWFILE"
 
   log "Found: $formulae_count formulae, $casks_count casks, $mas_count MAS apps"
-
-  # Build brew bundle command
-  local bundle_cmd="brew bundle --file=\"$BREWFILE\" --no-lock"
-  
-  if (( NO_CASKS )); then
-    bundle_cmd="$bundle_cmd --no-casks"
+  if (( ! NO_CASKS )); then
+    log "Selected: $selected_casks/$casks_count casks"
+  fi
+  if (( ! NO_MAS )); then
+    log "Selected: $selected_mas/$mas_count MAS apps"
   fi
 
-  if (( NO_MAS )); then
-    bundle_cmd="$bundle_cmd --no-mas"
-  fi
-
-  # Run brew bundle
-  if eval "$bundle_cmd"; then
+  # Install from temporary Brewfile
+  log "Installing selected packages..."
+  if brew bundle --file="$temp_brewfile" --no-lock; then
     log "Brewfile installation completed successfully"
     
-    # Count what was actually installed (rough estimate)
-    if (( ! NO_CASKS )); then
-      CASKS_INSTALLED=$casks_count
-    fi
-    if (( ! NO_MAS )); then
-      MAS_APPS_INSTALLED=$mas_count
-    fi
     FORMULAE_INSTALLED=$formulae_count
+    CASKS_INSTALLED=$selected_casks
+    MAS_APPS_INSTALLED=$selected_mas
     
     return 0
   else
