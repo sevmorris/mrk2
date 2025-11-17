@@ -426,6 +426,20 @@ interactive_selection() {
     echo "$width"
   }
   
+  # Function to strip ANSI escape codes and get visible length
+  # ANSI codes don't take up visual space but are counted in ${#string}
+  strip_ansi() {
+    # Remove ANSI escape sequences (ESC[ ... m)
+    echo "$1" | sed 's/\x1b\[[0-9;]*m//g'
+  }
+  
+  # Function to get visible width (without ANSI codes)
+  visible_width() {
+    local stripped
+    stripped=$(strip_ansi "$1")
+    echo ${#stripped}
+  }
+  
   # Function to get item index from column/row position
   get_item_index() {
     local col=$1
@@ -528,9 +542,13 @@ interactive_selection() {
       
       local item_str=$(get_item_display $col $row $is_cursor)
       if [[ -n "$item_str" ]]; then
-        # Pad to column width
-        local padding=$((col_width - ${#item_str}))
-        item_str="${item_str}$(printf '%*s' "$padding" '')"
+        # Pad to column width using visible width (without ANSI codes)
+        local visible_len
+        visible_len=$(visible_width "$item_str")
+        local padding=$((col_width - visible_len))
+        if (( padding > 0 )); then
+          item_str="${item_str}$(printf '%*s' "$padding" '')"
+        fi
         line_content="${line_content}${item_str}"
       else
         # Empty cell
@@ -633,8 +651,10 @@ interactive_selection() {
         printf "${color_cyan}│${color_reset} " > /dev/tty
         local line_content=$(build_row_content $row $cursor_col $cursor_row)
         printf "%s" "$line_content" > /dev/tty
-        # Calculate remaining space and pad
-        local current_line_len=$((${#line_content} + 3))
+        # Calculate remaining space and pad using visible width (without ANSI codes)
+        local visible_line_len
+        visible_line_len=$(visible_width "$line_content")
+        local current_line_len=$((visible_line_len + 3))  # +3 for "│ " prefix
         if (( current_line_len < box_width - 1 )); then
           printf "%*s" $((box_width - current_line_len - 1)) "" > /dev/tty
         fi
@@ -667,34 +687,38 @@ interactive_selection() {
       # Incremental update: only update the rows that changed
       if (( prev_cursor_row != cursor_row || prev_cursor_col != cursor_col )); then
         local box_width=$(get_box_width)
-        # Update previous cursor position (removes cursor indicator)
-        if (( prev_cursor_row < num_rows )); then
-          local line_num=$((header_lines + prev_cursor_row + 1))
-          tput cup $line_num 0 > /dev/tty 2>/dev/null || return
-          tput el > /dev/tty 2>/dev/null
-          local line_content=$(build_row_content $prev_cursor_row $prev_cursor_col $prev_cursor_row)
-          printf "${color_cyan}│${color_reset} %s" "$line_content" > /dev/tty
-          local current_line_len=$((${#line_content} + 3))
-          if (( current_line_len < box_width - 1 )); then
-            printf "%*s" $((box_width - current_line_len - 1)) "" > /dev/tty
-          fi
-          printf "${color_cyan}│${color_reset}" > /dev/tty
-          tput el > /dev/tty 2>/dev/null
-        fi
-        # Update new cursor position (adds cursor indicator)
-        if (( cursor_row < num_rows )); then
-          local line_num=$((header_lines + cursor_row + 1))
-          tput cup $line_num 0 > /dev/tty 2>/dev/null || return
-          tput el > /dev/tty 2>/dev/null
-          local line_content=$(build_row_content $cursor_row $cursor_col $cursor_row)
-          printf "${color_cyan}│${color_reset} %s" "$line_content" > /dev/tty
-          local current_line_len=$((${#line_content} + 3))
-          if (( current_line_len < box_width - 1 )); then
-            printf "%*s" $((box_width - current_line_len - 1)) "" > /dev/tty
-          fi
-          printf "${color_cyan}│${color_reset}" > /dev/tty
-          tput el > /dev/tty 2>/dev/null
-        fi
+            # Update previous cursor position (removes cursor indicator)
+            if (( prev_cursor_row < num_rows )); then
+              local line_num=$((header_lines + prev_cursor_row + 1))
+              tput cup $line_num 0 > /dev/tty 2>/dev/null || return
+              tput el > /dev/tty 2>/dev/null
+              local line_content=$(build_row_content $prev_cursor_row $prev_cursor_col $prev_cursor_row)
+              printf "${color_cyan}│${color_reset} %s" "$line_content" > /dev/tty
+              local visible_line_len
+              visible_line_len=$(visible_width "$line_content")
+              local current_line_len=$((visible_line_len + 3))  # +3 for "│ " prefix
+              if (( current_line_len < box_width - 1 )); then
+                printf "%*s" $((box_width - current_line_len - 1)) "" > /dev/tty
+              fi
+              printf "${color_cyan}│${color_reset}" > /dev/tty
+              tput el > /dev/tty 2>/dev/null
+            fi
+            # Update new cursor position (adds cursor indicator)
+            if (( cursor_row < num_rows )); then
+              local line_num=$((header_lines + cursor_row + 1))
+              tput cup $line_num 0 > /dev/tty 2>/dev/null || return
+              tput el > /dev/tty 2>/dev/null
+              local line_content=$(build_row_content $cursor_row $cursor_col $cursor_row)
+              printf "${color_cyan}│${color_reset} %s" "$line_content" > /dev/tty
+              local visible_line_len
+              visible_line_len=$(visible_width "$line_content")
+              local current_line_len=$((visible_line_len + 3))  # +3 for "│ " prefix
+              if (( current_line_len < box_width - 1 )); then
+                printf "%*s" $((box_width - current_line_len - 1)) "" > /dev/tty
+              fi
+              printf "${color_cyan}│${color_reset}" > /dev/tty
+              tput el > /dev/tty 2>/dev/null
+            fi
       fi
     fi
     
@@ -789,7 +813,9 @@ interactive_selection() {
               local box_width=$(get_box_width)
               local line_content=$(build_row_content $cursor_row $cursor_col $cursor_row)
               printf "${color_cyan}│${color_reset} %s" "$line_content" > /dev/tty
-              local current_line_len=$((${#line_content} + 3))
+              local visible_line_len
+              visible_line_len=$(visible_width "$line_content")
+              local current_line_len=$((visible_line_len + 3))  # +3 for "│ " prefix
               if (( current_line_len < box_width - 1 )); then
                 printf "%*s" $((box_width - current_line_len - 1)) "" > /dev/tty
               fi
