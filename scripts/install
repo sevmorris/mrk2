@@ -196,7 +196,56 @@ install_mas() {
   fi
 }
 
-# Interactive selection form for apps
+# Read a single keypress, handling escape sequences for arrow keys
+# Returns: "UP", "DOWN", "SPACE", "ENTER", or the character pressed
+read_key() {
+  local key
+  # Save terminal settings
+  local old_stty
+  old_stty=$(stty -g)
+  # Set terminal to raw mode (no line buffering, no echo)
+  stty -icanon -echo time 0 min 0 < /dev/tty
+  
+  # Read first character
+  key=$(dd bs=1 count=1 < /dev/tty 2>/dev/null)
+  
+  # Check for escape sequence (arrow keys start with \033[)
+  if [[ "$key" == $'\033' ]]; then
+    # Read the next character
+    local next
+    next=$(dd bs=1 count=1 < /dev/tty 2>/dev/null)
+    if [[ "$next" == "[" ]]; then
+      # Read the direction character
+      local dir
+      dir=$(dd bs=1 count=1 < /dev/tty 2>/dev/null)
+      case "$dir" in
+        A) key="UP" ;;
+        B) key="DOWN" ;;
+        C) key="RIGHT" ;;
+        D) key="LEFT" ;;
+        *) key="" ;;
+      esac
+    else
+      key=""
+    fi
+  elif [[ "$key" == " " ]]; then
+    key="SPACE"
+  elif [[ "$key" == $'\n' ]] || [[ "$key" == $'\r' ]]; then
+    key="ENTER"
+  elif [[ "$key" == "q" ]] || [[ "$key" == "Q" ]]; then
+    key="QUIT"
+  elif [[ "$key" == "a" ]] || [[ "$key" == "A" ]]; then
+    key="ALL"
+  elif [[ "$key" == "n" ]] || [[ "$key" == "N" ]]; then
+    key="NONE"
+  fi
+  
+  # Restore terminal settings
+  stty "$old_stty" < /dev/tty
+  echo -n "$key"
+}
+
+# Interactive selection form for apps with arrow key navigation
 # Usage: interactive_selection "cask"|"mas" items_array selected_array
 # items_array format: "name|line|id" for each item
 # Returns selected items in selected_array (associative array)
@@ -224,8 +273,8 @@ interactive_selection() {
     selected["$name"]=0
   done
   
+  local cursor_pos=0  # Current cursor position (0-indexed)
   local done=0
-  local show_help=1
   
   while (( ! done )); do
     # Clear screen and show list
@@ -248,87 +297,119 @@ interactive_selection() {
     
     printf "  Selected: %d/%d\n\n" "$selected_count" "$total" > /dev/tty
     
-    # Display items
-    local idx=1
+    # Display items with cursor highlighting
+    local idx=0
     for i in "${!items[@]}"; do
       local item_data="${items[$i]}"
       local name="${item_data%%|*}"
       local check=" "
       local status_marker=""
+      local cursor_marker=""
       
       if (( selected["$name"] == 1 )); then
         check="√"
       fi
       
-      # Check if item is marked as already installed (last field)
-      # For casks: "name|line|installed" or "name|line|"
-      # For MAS: "name|line|id|installed" or "name|line|id|"
+      # Check if item is marked as already installed
       if [[ "$item_data" == *"|installed" ]]; then
         status_marker=" (already installed)"
       fi
       
-      printf "  [%3d] %s %s%s\n" "$idx" "$check" "$name" "$status_marker" > /dev/tty
+      # Highlight current cursor position
+      if (( idx == cursor_pos )); then
+        cursor_marker="▶ "
+        printf "  %s[%3d] %s %s%s\n" "$cursor_marker" "$((idx+1))" "$check" "$name" "$status_marker" > /dev/tty
+      else
+        printf "     [%3d] %s %s%s\n" "$((idx+1))" "$check" "$name" "$status_marker" > /dev/tty
+      fi
       ((idx++))
     done
     
     printf "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" > /dev/tty
+    printf "\n  ↑/↓: Navigate  Space: Toggle  Enter: Done  a: Select All  n: Deselect All  q: Quit\n" > /dev/tty
     
-    if (( show_help )); then
-      printf "\n  Commands:\n" > /dev/tty
-      printf "    <number>     - Toggle selection for item number\n" > /dev/tty
-      printf "    all          - Select all items\n" > /dev/tty
-      printf "    none         - Deselect all items\n" > /dev/tty
-      printf "    done/enter    - Finish selection and install\n" > /dev/tty
-      printf "    help         - Show this help\n" > /dev/tty
-      show_help=0
-    fi
+    # Read keypress
+    local key
+    key=$(read_key)
     
-    printf "\n  Enter command or number: " > /dev/tty
-    read -r input < /dev/tty
-    
-    case "$input" in
-      ""|done|d)
+    case "$key" in
+      UP)
+        if (( cursor_pos > 0 )); then
+          ((cursor_pos--))
+        fi
+        ;;
+      DOWN)
+        if (( cursor_pos < total - 1 )); then
+          ((cursor_pos++))
+        fi
+        ;;
+      SPACE)
+        # Toggle selection for current item
+        local idx=0
+        for i in "${!items[@]}"; do
+          if (( idx == cursor_pos )); then
+            local item_data="${items[$i]}"
+            local name="${item_data%%|*}"
+            # Toggle selection
+            if (( selected["$name"] == 1 )); then
+              selected["$name"]=0
+            else
+              selected["$name"]=1
+            fi
+            break
+          fi
+          ((idx++))
+        done
+        ;;
+      ENTER)
         done=1
         ;;
-      all|a)
+      QUIT)
+        # Deselect all and exit
+        for name in "${!selected[@]}"; do
+          selected["$name"]=0
+        done
+        done=1
+        ;;
+      ALL)
+        # Select all items
         for name in "${!selected[@]}"; do
           selected["$name"]=1
         done
         ;;
-      none|n)
+      NONE)
+        # Deselect all items
         for name in "${!selected[@]}"; do
           selected["$name"]=0
         done
         ;;
-      help|h|?)
-        show_help=1
-        ;;
-      [0-9]*)
-        local num=$((input))
-        if (( num >= 1 && num <= total )); then
-          local idx=1
-          for i in "${!items[@]}"; do
-            if (( idx == num )); then
-              local item_data="${items[$i]}"
-              local name="${item_data%%|*}"
-              # Toggle selection
-              if (( selected["$name"] == 1 )); then
-                selected["$name"]=0
-              else
-                selected["$name"]=1
-              fi
-              break
-            fi
-            ((idx++))
-          done
-        else
-          printf "  Invalid number. Please enter 1-%d\n" "$total" > /dev/tty
-          sleep 1
-        fi
+      "")
+        # Empty input, ignore
         ;;
       *)
-        printf "  Invalid command. Type 'help' for commands or a number to toggle.\n" > /dev/tty
-        sleep 1
+        # Try to interpret as number
+        if [[ "$key" =~ ^[0-9]+$ ]]; then
+          local num=$((key))
+          if (( num >= 1 && num <= total )); then
+            cursor_pos=$((num - 1))
+            # Also toggle selection
+            local idx=0
+            for i in "${!items[@]}"; do
+              if (( idx == cursor_pos )); then
+                local item_data="${items[$i]}"
+                local name="${item_data%%|*}"
+                # Toggle selection
+                if (( selected["$name"] == 1 )); then
+                  selected["$name"]=0
+                else
+                  selected["$name"]=1
+                fi
+                break
+              fi
+              ((idx++))
+            done
+          fi
+        fi
         ;;
     esac
   done
