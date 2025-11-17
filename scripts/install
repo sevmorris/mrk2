@@ -742,7 +742,7 @@ install_brewfile() {
   declare -A mas_lines=()
 
   # First pass: collect all items and check installation status
-  log "Scanning Brewfile for packages..."
+  log "Scanning Brewfile for packages... (this may take a moment, please be patient)"
   while IFS= read -r line || [[ -n "$line" ]]; do
     # Copy taps, comments, and blank lines directly
     if [[ "$line" =~ ^tap\  ]] || [[ "$line" =~ ^# ]] || [[ -z "$line" ]]; then
@@ -952,7 +952,12 @@ install_brewfile() {
   tput cnorm > /dev/tty 2>/dev/null || true
   
   log "Installing selected packages..."
-  if brew bundle --file="$temp_brewfile"; then
+  
+  # Run brew bundle with proper terminal connection
+  # Use tee to send output to both terminal and log file
+  # This ensures brew bundle can prompt for passwords and display progress
+  # stdin comes from /dev/tty so prompts work, output goes to both terminal and log
+  if brew bundle --file="$temp_brewfile" < /dev/tty 2>&1 | tee -a "$LOGFILE" > /dev/tty; then
     log "Brewfile installation completed successfully"
     return 0
   else
