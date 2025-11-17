@@ -683,9 +683,20 @@ interactive_selection() {
     :
   fi
   
-  # Cleanup
+  # Explicitly restore terminal before returning
+  # This ensures brew bundle and other commands work properly
   cleanup_terminal
   trap - EXIT INT TERM
+  
+  # Double-check terminal is in a normal state
+  # Restore saved state explicitly
+  if [[ -n "$old_stty" ]]; then
+    stty "$old_stty" < /dev/tty 2>/dev/null || true
+  fi
+  # Ensure echo and canonical mode are definitely restored
+  stty echo icanon < /dev/tty 2>/dev/null || true
+  # Show cursor
+  tput cnorm > /dev/tty 2>/dev/null || true
 }
 
 # Install packages from Brewfile
@@ -935,6 +946,11 @@ install_brewfile() {
   fi
 
   # Install from temporary Brewfile
+  # Ensure terminal is in normal state before running brew bundle
+  # (in case it's still in raw mode from interactive selection)
+  stty echo icanon < /dev/tty 2>/dev/null || true
+  tput cnorm > /dev/tty 2>/dev/null || true
+  
   log "Installing selected packages..."
   if brew bundle --file="$temp_brewfile"; then
     log "Brewfile installation completed successfully"
