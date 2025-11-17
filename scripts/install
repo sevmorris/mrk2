@@ -382,7 +382,10 @@ interactive_selection() {
   local header_lines=5  # Number of lines before the item list (header + stats)
   
   # Calculate maximum item name length for column width
+  # Set a fixed maximum width to prevent wrapping with different window sizes
   local max_name_len=0
+  local max_allowed_width=35  # Maximum width for item display (including checkbox and status)
+  
   for i in "${!items[@]}"; do
     local item_data="${items[$i]}"
     local name="${item_data%%|*}"
@@ -395,6 +398,11 @@ interactive_selection() {
       max_name_len=$item_len
     fi
   done
+  
+  # Use the calculated width, but cap it at max_allowed_width to prevent wrapping
+  if (( max_name_len > max_allowed_width )); then
+    max_name_len=$max_allowed_width
+  fi
   
   local col_width=$((max_name_len + 2))  # Add spacing between columns
   
@@ -445,10 +453,21 @@ interactive_selection() {
       status_marker=" (installed)"
     fi
     
+    # Calculate available width for the name (accounting for checkbox, cursor, and status)
+    local prefix_len=5  # "▶ [√] " or "  [ ] "
+    local status_len=${#status_marker}
+    local max_name_display_len=$((max_allowed_width - prefix_len - status_len))
+    
+    # Truncate name if it's too long
+    local display_name="$name"
+    if (( ${#name} > max_name_display_len )); then
+      display_name="${name:0:$((max_name_display_len - 3))}..."
+    fi
+    
     if (( is_cursor )); then
-      printf "▶ %s %s%s" "$checkbox" "$name" "$status_marker"
+      printf "▶ %s %s%s" "$checkbox" "$display_name" "$status_marker"
     else
-      printf "  %s %s%s" "$checkbox" "$name" "$status_marker"
+      printf "  %s %s%s" "$checkbox" "$display_name" "$status_marker"
     fi
   }
   
@@ -528,7 +547,7 @@ interactive_selection() {
       done
       
       printf "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" > /dev/tty
-      printf "\n  ↑/↓: Navigate column  ←/→: Navigate row  Space: Toggle  d: Done  a: All  n: None  q: Quit\n" > /dev/tty
+      printf "↑/↓: Navigate column  ←/→: Navigate row  Space: Toggle  d: Done  a: All  n: None  q: Quit\n" > /dev/tty
       
       needs_full_redraw=0
       prev_page_start=$page_start
