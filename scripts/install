@@ -249,7 +249,7 @@ read_key() {
   echo -n "$key"
 }
 
-# Interactive selection form for apps with arrow key navigation
+# Simple interactive selection: prompt for each item individually
 # Usage: interactive_selection "cask"|"formula" items_array selected_array
 # items_array format: "name|line|id" for each item
 # Returns selected items in selected_array (associative array)
@@ -269,102 +269,17 @@ interactive_selection() {
     return 0
   fi
   
-  # Check if terminal supports colors
-  local colors_supported=0
-  if tput colors >/dev/null 2>&1 && (( $(tput colors 2>/dev/null || echo 0) >= 8 )); then
-    colors_supported=1
+  # Simple prompt for each item
+  local type_label=""
+  if [[ "$type" == "cask" ]]; then
+    type_label="Cask"
+  elif [[ "$type" == "formula" ]]; then
+    type_label="Formula"
   fi
   
-  # Color definitions (using tput for portability)
-  # If colors aren't supported, these will be empty strings
-  local color_reset=""
-  local color_bold=""
-  local color_underline=""
-  local color_reverse=""
-  local color_white=""
-  local color_cyan=""
-  local color_green=""
-  local color_yellow=""
-  local color_blue=""
-  local color_magenta=""
-  local color_red=""
-  local bg_cyan=""
-  local bg_blue=""
-  local bg_green=""
-  
-  if (( colors_supported )); then
-    color_reset=$(tput sgr0 2>/dev/null || echo "")
-    color_bold=$(tput bold 2>/dev/null || echo "")
-    color_underline=$(tput smul 2>/dev/null || echo "")
-    color_reverse=$(tput rev 2>/dev/null || echo "")
-    
-    # Colors
-    color_white=$(tput setaf 7 2>/dev/null || echo "")
-    color_cyan=$(tput setaf 6 2>/dev/null || echo "")
-    color_green=$(tput setaf 2 2>/dev/null || echo "")
-    color_yellow=$(tput setaf 3 2>/dev/null || echo "")
-    color_blue=$(tput setaf 4 2>/dev/null || echo "")
-    color_magenta=$(tput setaf 5 2>/dev/null || echo "")
-    color_red=$(tput setaf 1 2>/dev/null || echo "")
-    
-    # Background colors
-    bg_cyan=$(tput setab 6 2>/dev/null || echo "")
-    bg_blue=$(tput setab 4 2>/dev/null || echo "")
-    bg_green=$(tput setab 2 2>/dev/null || echo "")
-  fi
-  
-  # Save terminal state and set up cleanup trap
-  local old_stty
-  old_stty=$(stty -g 2>/dev/null)
-  
-  # Set terminal to raw mode for the entire interactive session
-  # This prevents escape sequences from appearing and ensures consistent behavior
-  # On macOS, we need to be careful with stty settings
-  # Disable canonical mode, echo, and all input processing
-  stty -icanon -echo -icrnl -opost -isig -ixon -iexten time 0 min 0 < /dev/tty 2>/dev/null || {
-    stty "$old_stty" < /dev/tty 2>/dev/null
-    return 1
-  }
-  
-  # Double-check echo is off
-  stty -echo < /dev/tty 2>/dev/null
-  
-  # Hide cursor to prevent visual artifacts
-  tput civis > /dev/tty 2>/dev/null
-  
-  # Cleanup function to restore terminal
-  cleanup_terminal() {
-    # Show cursor again
-    tput cnorm > /dev/tty 2>/dev/null
-    
-    # Flush any remaining input first (very aggressively)
-    local flush_count=0
-    while IFS= read -r -t 0 < /dev/tty 2>/dev/null && (( flush_count < 100 )); do
-      IFS= read -r -n 1 -t 0.001 < /dev/tty >/dev/null 2>&1 || break
-      ((flush_count++))
-    done
-    
-    # Restore terminal settings
-    if [[ -n "$old_stty" ]]; then
-      stty "$old_stty" < /dev/tty 2>/dev/null
-    fi
-    # Ensure echo is back on
-    stty echo < /dev/tty 2>/dev/null
-    # Ensure canonical mode is restored
-    stty icanon < /dev/tty 2>/dev/null
-    # Clear screen
-    tput clear > /dev/tty 2>/dev/null || clear > /dev/tty 2>/dev/null
-  }
-  
-  # Trap to ensure terminal is restored on exit
-  trap cleanup_terminal EXIT INT TERM
-  
-  # Handle terminal resize - redraw the screen
-  handle_resize() {
-    needs_full_redraw=1
-    redraw_screen
-  }
-  trap handle_resize WINCH
+  echo ""
+  echo "Select $type_label items to install (y/n, default: n):"
+  echo ""
   
   # Initialize all as unselected
   local i
@@ -374,358 +289,37 @@ interactive_selection() {
     selected["$name"]=0
   done
   
-  # Fixed layout: 4 columns, 20 rows (80 items visible at once)
-  local num_cols=4
-  local num_rows=20
-  local items_per_page=$((num_cols * num_rows))  # 80 items
-  
-  # Cursor position: column (0-3) and row (0-19) within visible page
-  local cursor_col=0
-  local cursor_row=0
-  local prev_cursor_col=0
-  local prev_cursor_row=0
-  local page_start=0  # First item index of current page (for scrolling)
-  local prev_page_start=0
-  local done=0
-  local needs_full_redraw=1
-  local header_lines=3  # Number of lines before the item list (title + stats + blank)
-  
-  # Simple layout - no complex width calculations needed
-  
-  # Simple terminal width check
-  local min_terminal_width=80
-  
-  # Function to get terminal width
-  get_terminal_width() {
-    local width
-    width=$(tput cols 2>/dev/null || echo 80)
-    echo "$width"
-  }
-  
-  # Function to get item index from column/row position
-  get_item_index() {
-    local col=$1
-    local row=$2
-    echo $((page_start + col * num_rows + row))
-  }
-  
-  # Function to get item display string (simple - no colors, no truncation)
-  get_item_display() {
-    local col=$1
-    local row=$2
-    local idx=$(get_item_index $col $row)
-    local is_cursor=$3  # 1 if this is the cursor position, 0 otherwise
-    
-    if (( idx >= total )); then
-      echo ""
-      return
-    fi
-    
-    # Get item data
-    local item_idx=0
-    local item_data=""
-    for i in "${!items[@]}"; do
-      if (( item_idx == idx )); then
-        item_data="${items[$i]}"
-        break
-      fi
-      ((item_idx++))
-    done
-    
-    if [[ -z "$item_data" ]]; then
-      echo ""
-      return
-    fi
-    
+  # Prompt for each item
+  for i in "${!items[@]}"; do
+    local item_data="${items[$i]}"
     local name="${item_data%%|*}"
-    local checkbox="[ ]"
-    if (( selected["$name"] == 1 )); then
-      checkbox="[√]"
-    fi
-    
     local status_marker=""
     if [[ "$item_data" == *"|installed" ]]; then
-      status_marker=" (installed)"
+      status_marker=" (already installed)"
     fi
     
-    # Simple display: cursor indicator, checkbox, name, status
-    if (( is_cursor )); then
-      echo "▶ $checkbox $name$status_marker"
-    else
-      echo "  $checkbox $name$status_marker"
-    fi
-  }
-  
-  # Function to build a row's content (simple version)
-  build_row_content() {
-    local row=$1
-    local cursor_col_pos=$2
-    local cursor_row_pos=$3
-    
-    local col=0
-    local parts=()
-    
-    while (( col < num_cols )); do
-      local is_cursor=0
-      if (( col == cursor_col_pos && row == cursor_row_pos )); then
-        is_cursor=1
-      fi
-      
-      local idx=$(get_item_index $col $row)
-      if (( idx < total )); then
-        local item_str
-        item_str=$(get_item_display $col $row $is_cursor)
-        # Use printf with fixed width (35 chars) for each column
-        parts+=("$(printf "%-35s" "$item_str")")
-      else
-        parts+=("$(printf "%-35s" "")")
-      fi
-      ((col++))
-    done
-    
-    # Join with 2 spaces between columns
-    echo "${parts[0]}  ${parts[1]}  ${parts[2]}  ${parts[3]}"
-  }
-  
-  # Function to update a single row (for full redraw)
-  update_row() {
-    local row=$1
-    local line_content=$(build_row_content $row $cursor_col $cursor_row)
-    printf "%s" "$line_content" > /dev/tty
-  }
-  
-  # Function to redraw the screen (full or incremental)
-  redraw_screen() {
-    # Check terminal width and warn if too narrow
-    # Note: min_terminal_width is defined in the parent scope
-    local term_width
-    term_width=$(get_terminal_width)
-    # Use default if min_terminal_width isn't set (shouldn't happen, but safety check)
-    local min_width=${min_terminal_width:-80}
-    if (( term_width < min_width )); then
-      # Terminal is too narrow, but we'll still try to display
-      # The fixed column width should prevent wrapping
-      :
-    fi
-    
-    if (( needs_full_redraw )) || (( page_start != prev_page_start )); then
-      # Full redraw - clear screen and start from top
-      tput clear > /dev/tty 2>/dev/null || clear > /dev/tty
-      
-      # Title
-      local title=""
-      if [[ "$type" == "cask" ]]; then
-        title="Select Homebrew Casks to Install"
-      elif [[ "$type" == "formula" ]]; then
-        title="Select Homebrew Formulae to Install"
-      fi
-      printf "\n${color_bold}${color_cyan}%s${color_reset}\n" "$title" > /dev/tty
-      
-      # Count selected
-      local selected_count=0
-      for name in "${!selected[@]}"; do
-        if (( selected["$name"] == 1 )); then
-          ((selected_count++))
-        fi
-      done
-      
-      local page_end=$((page_start + items_per_page))
-      if (( page_end > total )); then
-        page_end=$total
-      fi
-      
-      # Stats line
-      printf "${color_cyan}Selected: ${color_green}$selected_count${color_reset}/${color_white}$total${color_reset}  |  Showing: ${color_white}$((page_start+1))-$page_end${color_reset} of $total\n\n" > /dev/tty
-      
-      # Display all items - build_row_content already includes newline
-      local row=0
-      while (( row < num_rows )); do
-        build_row_content $row $cursor_col $cursor_row > /dev/tty
-        ((row++))
-      done
-      
-      # Controls line
-      printf "\n${color_cyan}↑/↓${color_reset}: Navigate column  |  ${color_cyan}←/→${color_reset}: Navigate row  |  ${color_green}Space${color_reset}: Toggle  |  ${color_green}d${color_reset}: Done  |  ${color_yellow}a${color_reset}: All  |  ${color_yellow}n${color_reset}: None  |  ${color_red}q${color_reset}: Quit\n" > /dev/tty
-      
-      needs_full_redraw=0
-      prev_page_start=$page_start
-      header_lines=3  # Title + stats + blank line
-    else
-      # Incremental update: only update the rows that changed
-      if (( prev_cursor_row != cursor_row || prev_cursor_col != cursor_col )); then
-        # Update previous cursor position (removes cursor indicator)
-        if (( prev_cursor_row < num_rows )); then
-          local line_num=$((header_lines + prev_cursor_row + 1))
-          if tput cup $line_num 0 > /dev/tty 2>/dev/null; then
-            tput el > /dev/tty 2>/dev/null
-            build_row_content $prev_cursor_row $prev_cursor_col $prev_cursor_row > /dev/tty
-          fi
-        fi
-        # Update new cursor position (adds cursor indicator)
-        if (( cursor_row < num_rows )); then
-          local line_num=$((header_lines + cursor_row + 1))
-          if tput cup $line_num 0 > /dev/tty 2>/dev/null; then
-            tput el > /dev/tty 2>/dev/null
-            build_row_content $cursor_row $cursor_col $cursor_row > /dev/tty
-          fi
-        fi
-      fi
-    fi
-    
-    # Save current cursor position
-    prev_cursor_col=$cursor_col
-    prev_cursor_row=$cursor_row
-  }
-  
-  # Initial draw
-  redraw_screen
-  
-  while true; do
-    # Check if we should exit before reading
-    if (( done )); then
-      break
-    fi
-    
-    # Read keypress
-    local key
-    key=$(read_key)
-    
-    # Handle empty/timeout - redraw to keep screen fresh
-    if [[ -z "$key" ]]; then
-      continue
-    fi
-    
-    case "$key" in
-      UP)
-        # Move up within the same column
-        if (( cursor_row > 0 )); then
-          ((cursor_row--))
-        elif (( page_start > 0 )); then
-          # Scroll page up
-          page_start=$((page_start - num_cols))
-          if (( page_start < 0 )); then
-            page_start=0
-          fi
-          needs_full_redraw=1
-        fi
-        redraw_screen
-        ;;
-      DOWN)
-        # Move down within the same column
-        local current_idx=$(get_item_index $cursor_col $cursor_row)
-        local next_idx=$(get_item_index $cursor_col $((cursor_row + 1)))
-        if (( next_idx < total )); then
-          if (( cursor_row < num_rows - 1 )); then
-            ((cursor_row++))
-          elif (( page_start + items_per_page < total )); then
-            # Scroll page down
-            page_start=$((page_start + num_cols))
-            needs_full_redraw=1
-          fi
-        fi
-        redraw_screen
-        ;;
-      LEFT)
-        # Move to previous column (same row)
-        if (( cursor_col > 0 )); then
-          ((cursor_col--))
-          redraw_screen
-        fi
-        ;;
-      RIGHT)
-        # Move to next column (same row)
-        local current_idx=$(get_item_index $cursor_col $cursor_row)
-        local next_idx=$(get_item_index $((cursor_col + 1)) $cursor_row)
-        if (( next_idx < total && cursor_col < num_cols - 1 )); then
-          ((cursor_col++))
-          redraw_screen
-        fi
-        ;;
-      SPACE)
-        # Toggle selection for current item
-        local idx=$(get_item_index $cursor_col $cursor_row)
-        if (( idx < total )); then
-          local item_idx=0
-          for i in "${!items[@]}"; do
-            if (( item_idx == idx )); then
-              local item_data="${items[$i]}"
-              local name="${item_data%%|*}"
-              # Toggle selection
-              if (( selected["$name"] == 1 )); then
-                selected["$name"]=0
-              else
-                selected["$name"]=1
-              fi
-              # Update just this row
-              local line_num=$((header_lines + cursor_row + 1))
-              if tput cup $line_num 0 > /dev/tty 2>/dev/null; then
-                tput el > /dev/tty 2>/dev/null
-                build_row_content $cursor_row $cursor_col $cursor_row > /dev/tty
-              fi
-              break
-            fi
-            ((item_idx++))
-          done
-        fi
-        ;;
-      ENTER)
-        done=1
-        ;;
-      QUIT)
-        # Deselect all and exit
-        for name in "${!selected[@]}"; do
-          selected["$name"]=0
-        done
-        done=1
-        ;;
-      ALL)
-        # Select all items
-        for name in "${!selected[@]}"; do
+    # Prompt user
+    while true; do
+      printf "Install %s%s? [y/N]: " "$name" "$status_marker" > /dev/tty
+      read -r response < /dev/tty
+      case "$response" in
+        [yY]|[yY][eE][sS])
           selected["$name"]=1
-        done
-        needs_full_redraw=1
-        redraw_screen
-        ;;
-      NONE)
-        # Deselect all items
-        for name in "${!selected[@]}"; do
+          break
+          ;;
+        [nN]|[nN][oO]|"")
           selected["$name"]=0
-        done
-        needs_full_redraw=1
-        redraw_screen
-        ;;
-      *)
-        # Ignore other keys
-        ;;
-    esac
-    
-    # Check if we should exit after processing the key
-    # This must be checked here, not just at the start of the loop
-    if (( done )); then
-      break
-    fi
+          break
+          ;;
+        *)
+          echo "Please answer y or n." > /dev/tty
+          ;;
+      esac
+    done
   done
   
-  # Ensure we exit if done was set
-  if (( done )); then
-    # Already breaking, but ensure cleanup happens
-    :
-  fi
-  
-  # Explicitly restore terminal before returning
-  # This ensures brew bundle and other commands work properly
-  cleanup_terminal
-  trap - EXIT INT TERM WINCH
-  
-  # Double-check terminal is in a normal state
-  # Restore saved state explicitly
-  if [[ -n "$old_stty" ]]; then
-    stty "$old_stty" < /dev/tty 2>/dev/null || true
-  fi
-  # Ensure echo and canonical mode are definitely restored
-  stty echo icanon < /dev/tty 2>/dev/null || true
-  # Show cursor
-  tput cnorm > /dev/tty 2>/dev/null || true
+  echo ""
+  return 0
 }
 
 # Install packages from Brewfile
