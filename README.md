@@ -22,10 +22,10 @@ make fix-exec && make install
 ## What it installs
 
 - **Homebrew** (if not already installed)
-- **CLI tools** (formulae) from the Brewfile (ripgrep, shellcheck, languages, etc.) — **interactive selection**
-- **Applications** via Homebrew Casks (browsers, editors, utilities, etc.) — **interactive selection**
+- **CLI tools** (formulae) from the Brewfile (ripgrep, shellcheck, languages, etc.) — **interactive prompts**
+- **Applications** via Homebrew Casks (browsers, editors, utilities, etc.) — **interactive prompts**
 
-> **Note:** All packages (formulae and casks) are presented in an interactive multi-column selection form where you can choose which items to install. Items already installed are marked and will be skipped during installation.
+> **Note:** All packages (formulae and casks) are presented one at a time with simple yes/no prompts. Items already installed are marked and will be skipped during installation even if selected.
 
 ---
 
@@ -66,17 +66,15 @@ make doctor       # run Homebrew doctor
 ./scripts/install --help
 ```
 
-**Interactive Selection Form:** Formulae (CLI tools) and casks (GUI apps) are displayed in a multi-column selection interface (4 columns × 20 rows, showing 80 items at once). You'll see two separate selection screens, one for each type. Use the following controls:
+**Interactive Prompts:** Formulae (CLI tools) and casks (GUI apps) are presented one at a time with simple prompts. You'll see two separate sets of prompts, one for each type. For each item, you'll be asked:
 
-- **↑/↓ Arrow Keys** — Navigate up/down within the current column
-- **←/→ Arrow Keys** — Navigate left/right between columns (same row)
-- **Space** — Toggle selection for the current item
-- **d** — Finish selection and proceed with installation
-- **a** — Select all items
-- **n** — Deselect all items
-- **q** — Quit (deselects all and exits)
+```
+Install <package-name>? [y/N]:
+```
 
-Items show `[ ]` when unselected and `[√]` when selected. Items already installed are marked with "(installed)" and will be skipped during installation even if selected.
+- **y** or **Y** — Install this item
+- **n**, **N**, or **Enter** — Skip this item (default)
+- Items already installed are marked with "(already installed)" and will be skipped during installation even if you select them
 
 ### Check Installation Status
 
