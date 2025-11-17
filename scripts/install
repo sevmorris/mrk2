@@ -575,14 +575,14 @@ interactive_selection() {
   }
   
   # Function to build a row's content (returns the line string)
+  # Uses printf with fixed widths to ensure perfect alignment
   build_row_content() {
     local row=$1
     local cursor_col_pos=$2
     local cursor_row_pos=$3
     
-    # Build the line - simpler approach: build each column separately
     local col=0
-    local output=""
+    local parts=()
     
     while (( col < num_cols )); do
       local is_cursor=0
@@ -604,54 +604,47 @@ interactive_selection() {
         done
         
         if [[ -n "$item_data" ]]; then
+          # Get the colored display string
+          local item_str
+          item_str=$(get_item_display $col $row $is_cursor)
+          
+          # Get plain text for width calculation
           local name="${item_data%%|*}"
           local is_selected=0
           if (( selected["$name"] == 1 )); then
             is_selected=1
           fi
-          
           local is_installed=0
           if [[ "$item_data" == *"|installed" ]]; then
             is_installed=1
           fi
-          
-          # Get plain text version for width calculation
           local plain_text
           plain_text=$(get_item_display_plain "$name" $is_selected $is_installed $is_cursor)
           local plain_len=${#plain_text}
           
-          # Get colored version for display
-          local item_str
-          item_str=$(get_item_display $col $row $is_cursor)
-          
-          # Calculate padding needed (using plain text length)
+          # Calculate how much padding we need
           local padding=$((col_width - plain_len))
           
-          # Build this column's output: item + padding
+          # Build the column: item string + padding spaces (no ANSI codes in padding)
           if (( padding > 0 )); then
-            output="${output}${item_str}$(printf '%*s' "$padding" '')"
+            # Use printf to format: item string left-aligned, then padding
+            parts+=("${item_str}$(printf '%*s' "$padding" '')")
           else
-            output="${output}${item_str}"
+            parts+=("${item_str}")
           fi
         else
-          # Empty cell - just spaces
-          output="${output}$(printf '%*s' "$col_width" '')"
+          # Empty cell
+          parts+=("$(printf '%*s' "$col_width" '')")
         fi
       else
-        # Empty cell (beyond total items)
-        output="${output}$(printf '%*s' "$col_width" '')"
+        # Empty cell (beyond total)
+        parts+=("$(printf '%*s' "$col_width" '')")
       fi
-      
-      # Add space between columns (except after last column)
-      if (( col < num_cols - 1 )); then
-        output="${output} "
-      fi
-      
       ((col++))
     done
     
-    # Return the line (no trimming - we control the width exactly)
-    echo "$output"
+    # Join parts with 2 spaces between columns for clear separation
+    printf "%s  %s  %s  %s\n" "${parts[0]}" "${parts[1]}" "${parts[2]}" "${parts[3]}"
   }
   
   # Function to update a single row (for full redraw)
@@ -704,15 +697,10 @@ interactive_selection() {
       # Stats line
       printf "${color_cyan}Selected: ${color_green}$selected_count${color_reset}/${color_white}$total${color_reset}  |  Showing: ${color_white}$((page_start+1))-$page_end${color_reset} of $total\n\n" > /dev/tty
       
-      # Display all items - ensure each line is properly formatted
+      # Display all items - build_row_content already includes newline
       local row=0
       while (( row < num_rows )); do
-        local line_content
-        line_content=$(build_row_content $row $cursor_col $cursor_row)
-        # Print the line and clear to end of line
-        printf "%s" "$line_content" > /dev/tty
-        tput el > /dev/tty 2>/dev/null || true
-        printf "\n" > /dev/tty
+        build_row_content $row $cursor_col $cursor_row > /dev/tty
         ((row++))
       done
       
@@ -730,10 +718,7 @@ interactive_selection() {
           local line_num=$((header_lines + prev_cursor_row + 1))
           if tput cup $line_num 0 > /dev/tty 2>/dev/null; then
             tput el > /dev/tty 2>/dev/null
-            local line_content
-            line_content=$(build_row_content $prev_cursor_row $prev_cursor_col $prev_cursor_row)
-            printf "%s" "$line_content" > /dev/tty
-            tput el > /dev/tty 2>/dev/null
+            build_row_content $prev_cursor_row $prev_cursor_col $prev_cursor_row > /dev/tty
           fi
         fi
         # Update new cursor position (adds cursor indicator)
@@ -741,10 +726,7 @@ interactive_selection() {
           local line_num=$((header_lines + cursor_row + 1))
           if tput cup $line_num 0 > /dev/tty 2>/dev/null; then
             tput el > /dev/tty 2>/dev/null
-            local line_content
-            line_content=$(build_row_content $cursor_row $cursor_col $cursor_row)
-            printf "%s" "$line_content" > /dev/tty
-            tput el > /dev/tty 2>/dev/null
+            build_row_content $cursor_row $cursor_col $cursor_row > /dev/tty
           fi
         fi
       fi
@@ -838,10 +820,7 @@ interactive_selection() {
               local line_num=$((header_lines + cursor_row + 1))
               if tput cup $line_num 0 > /dev/tty 2>/dev/null; then
                 tput el > /dev/tty 2>/dev/null
-                local line_content
-                line_content=$(build_row_content $cursor_row $cursor_col $cursor_row)
-                printf "%s" "$line_content" > /dev/tty
-                tput el > /dev/tty 2>/dev/null
+                build_row_content $cursor_row $cursor_col $cursor_row > /dev/tty
               fi
               break
             fi
