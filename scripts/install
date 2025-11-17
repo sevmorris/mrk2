@@ -200,24 +200,30 @@ install_mas() {
 # Returns: "UP", "DOWN", "SPACE", "ENTER", or the character pressed
 read_key() {
   local key
-  # Save terminal settings
   local old_stty
-  old_stty=$(stty -g)
-  # Set terminal to raw mode (no line buffering, no echo)
-  stty -icanon -echo time 0 min 0 < /dev/tty
   
-  # Read first character
-  key=$(dd bs=1 count=1 < /dev/tty 2>/dev/null)
+  # Save terminal settings
+  old_stty=$(stty -g 2>/dev/null) || return 1
   
-  # Check for escape sequence (arrow keys start with \033[)
+  # Set terminal to raw mode with timeout (time is in tenths of seconds)
+  # This makes read return after 0.1 seconds if no input
+  stty -icanon -echo time 1 min 0 < /dev/tty 2>/dev/null || {
+    stty "$old_stty" < /dev/tty 2>/dev/null
+    return 1
+  }
+  
+  # Read first character (will timeout after 0.1 seconds)
+  IFS= read -r -n 1 -t 0.1 key < /dev/tty 2>/dev/null || key=""
+  
+  # If we got escape sequence, read more
   if [[ "$key" == $'\033' ]]; then
-    # Read the next character
+    # Read the next characters with a small timeout
     local next
-    next=$(dd bs=1 count=1 < /dev/tty 2>/dev/null)
+    IFS= read -r -n 1 -t 0.05 next < /dev/tty 2>/dev/null || next=""
     if [[ "$next" == "[" ]]; then
       # Read the direction character
       local dir
-      dir=$(dd bs=1 count=1 < /dev/tty 2>/dev/null)
+      IFS= read -r -n 1 -t 0.05 dir < /dev/tty 2>/dev/null || dir=""
       case "$dir" in
         A) key="UP" ;;
         B) key="DOWN" ;;
@@ -228,6 +234,11 @@ read_key() {
     else
       key=""
     fi
+  elif [[ -z "$key" ]]; then
+    # Timeout or empty, restore and return
+    stty "$old_stty" < /dev/tty 2>/dev/null
+    echo -n ""
+    return 0
   elif [[ "$key" == " " ]]; then
     key="SPACE"
   elif [[ "$key" == $'\n' ]] || [[ "$key" == $'\r' ]]; then
@@ -240,8 +251,14 @@ read_key() {
     key="NONE"
   fi
   
-  # Restore terminal settings
-  stty "$old_stty" < /dev/tty
+  # Restore terminal settings immediately
+  stty "$old_stty" < /dev/tty 2>/dev/null
+  
+  # Flush any remaining input to prevent buffering issues
+  while IFS= read -r -t 0 < /dev/tty 2>/dev/null; do
+    IFS= read -r -n 1 -t 0.01 < /dev/tty >/dev/null 2>&1 || break
+  done
+  
   echo -n "$key"
 }
 
@@ -265,6 +282,24 @@ interactive_selection() {
     return 0
   fi
   
+  # Save terminal state and set up cleanup trap
+  local old_stty
+  old_stty=$(stty -g 2>/dev/null)
+  
+  # Cleanup function to restore terminal
+  cleanup_terminal() {
+    if [[ -n "$old_stty" ]]; then
+      stty "$old_stty" < /dev/tty 2>/dev/null
+    fi
+    # Ensure echo is back on
+    stty echo < /dev/tty 2>/dev/null
+    # Clear screen
+    clear > /dev/tty 2>/dev/null
+  }
+  
+  # Trap to ensure terminal is restored on exit
+  trap cleanup_terminal EXIT INT TERM
+  
   # Initialize all as unselected
   local i
   for i in "${!items[@]}"; do
@@ -275,10 +310,13 @@ interactive_selection() {
   
   local cursor_pos=0  # Current cursor position (0-indexed)
   local done=0
+  local needs_redraw=1
   
-  while (( ! done )); do
-    # Clear screen and show list
-    clear > /dev/tty
+  # Function to redraw the screen
+  redraw_screen() {
+    # Use tput to clear screen more reliably
+    tput clear > /dev/tty 2>/dev/null || clear > /dev/tty
+    
     printf "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" > /dev/tty
     if [[ "$type" == "cask" ]]; then
       printf "  Select Homebrew Casks to Install\n" > /dev/tty
@@ -304,7 +342,6 @@ interactive_selection() {
       local name="${item_data%%|*}"
       local check=" "
       local status_marker=""
-      local cursor_marker=""
       
       if (( selected["$name"] == 1 )); then
         check="√"
@@ -317,30 +354,41 @@ interactive_selection() {
       
       # Highlight current cursor position
       if (( idx == cursor_pos )); then
-        cursor_marker="▶ "
-        printf "  %s[%3d] %s %s%s\n" "$cursor_marker" "$((idx+1))" "$check" "$name" "$status_marker" > /dev/tty
+        printf "  ▶ [%3d] %s %s%s\n" "$((idx+1))" "$check" "$name" "$status_marker" > /dev/tty
       else
-        printf "     [%3d] %s %s%s\n" "$((idx+1))" "$check" "$name" "$status_marker" > /dev/tty
+        printf "    [%3d] %s %s%s\n" "$((idx+1))" "$check" "$name" "$status_marker" > /dev/tty
       fi
       ((idx++))
     done
     
     printf "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" > /dev/tty
     printf "\n  ↑/↓: Navigate  Space: Toggle  Enter: Done  a: Select All  n: Deselect All  q: Quit\n" > /dev/tty
-    
+  }
+  
+  # Initial draw
+  redraw_screen
+  
+  while (( ! done )); do
     # Read keypress
     local key
     key=$(read_key)
+    
+    # Handle empty/timeout - redraw to keep screen fresh
+    if [[ -z "$key" ]]; then
+      continue
+    fi
     
     case "$key" in
       UP)
         if (( cursor_pos > 0 )); then
           ((cursor_pos--))
+          needs_redraw=1
         fi
         ;;
       DOWN)
         if (( cursor_pos < total - 1 )); then
           ((cursor_pos++))
+          needs_redraw=1
         fi
         ;;
       SPACE)
@@ -356,6 +404,7 @@ interactive_selection() {
             else
               selected["$name"]=1
             fi
+            needs_redraw=1
             break
           fi
           ((idx++))
@@ -376,15 +425,14 @@ interactive_selection() {
         for name in "${!selected[@]}"; do
           selected["$name"]=1
         done
+        needs_redraw=1
         ;;
       NONE)
         # Deselect all items
         for name in "${!selected[@]}"; do
           selected["$name"]=0
         done
-        ;;
-      "")
-        # Empty input, ignore
+        needs_redraw=1
         ;;
       *)
         # Try to interpret as number
@@ -404,6 +452,7 @@ interactive_selection() {
                 else
                   selected["$name"]=1
                 fi
+                needs_redraw=1
                 break
               fi
               ((idx++))
@@ -412,9 +461,17 @@ interactive_selection() {
         fi
         ;;
     esac
+    
+    # Redraw if needed
+    if (( needs_redraw )); then
+      redraw_screen
+      needs_redraw=0
+    fi
   done
   
-  clear > /dev/tty
+  # Cleanup
+  cleanup_terminal
+  trap - EXIT INT TERM
 }
 
 # Install packages from Brewfile
