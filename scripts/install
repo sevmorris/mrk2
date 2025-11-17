@@ -316,9 +316,13 @@ interactive_selection() {
   # Cursor position: column (0-3) and row (0-19) within visible page
   local cursor_col=0
   local cursor_row=0
+  local prev_cursor_col=0
+  local prev_cursor_row=0
   local page_start=0  # First item index of current page (for scrolling)
+  local prev_page_start=0
   local done=0
-  local needs_redraw=1
+  local needs_full_redraw=1
+  local header_lines=5  # Number of lines before the item list (header + stats)
   
   # Calculate maximum item name length for column width
   local max_name_len=0
@@ -344,96 +348,148 @@ interactive_selection() {
     echo $((page_start + col * num_rows + row))
   }
   
-  # Function to redraw the screen
-  redraw_screen() {
-    # Use tput to clear screen more reliably
-    tput clear > /dev/tty 2>/dev/null || clear > /dev/tty
+  # Function to get item display string
+  get_item_display() {
+    local col=$1
+    local row=$2
+    local idx=$(get_item_index $col $row)
+    local is_cursor=$3  # 1 if this is the cursor position, 0 otherwise
     
-    printf "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" > /dev/tty
-    if [[ "$type" == "cask" ]]; then
-      printf "  Select Homebrew Casks to Install\n" > /dev/tty
-    else
-      printf "  Select Mac App Store Apps to Install\n" > /dev/tty
+    if (( idx >= total )); then
+      echo ""
+      return
     fi
-    printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" > /dev/tty
     
-    # Count selected
-    local selected_count=0
-    for name in "${!selected[@]}"; do
-      if (( selected["$name"] == 1 )); then
-        ((selected_count++))
+    # Get item data
+    local item_idx=0
+    local item_data=""
+    for i in "${!items[@]}"; do
+      if (( item_idx == idx )); then
+        item_data="${items[$i]}"
+        break
       fi
+      ((item_idx++))
     done
     
-    local page_end=$((page_start + items_per_page))
-    if (( page_end > total )); then
-      page_end=$total
+    if [[ -z "$item_data" ]]; then
+      echo ""
+      return
     fi
-    printf "  Selected: %d/%d  (Showing items %d-%d)\n\n" "$selected_count" "$total" "$((page_start+1))" "$page_end" > /dev/tty
     
-    # Display items in 4-column, 20-row format
-    local row=0
-    while (( row < num_rows )); do
-      local col=0
-      local line=""
-      while (( col < num_cols )); do
-        local idx=$(get_item_index $col $row)
-        
-        if (( idx < total )); then
-          # Get item data
-          local item_idx=0
-          local item_data=""
-          for i in "${!items[@]}"; do
-            if (( item_idx == idx )); then
-              item_data="${items[$i]}"
-              break
-            fi
-            ((item_idx++))
-          done
-          
-          if [[ -n "$item_data" ]]; then
-            local name="${item_data%%|*}"
-            local checkbox="[ ]"
-            local status_marker=""
-            
-            if (( selected["$name"] == 1 )); then
-              checkbox="[√]"
-            fi
-            
-            # Check if item is marked as already installed
-            if [[ "$item_data" == *"|installed" ]]; then
-              status_marker=" (installed)"
-            fi
-            
-            # Build the item string
-            local item_str
-            if (( col == cursor_col && row == cursor_row )); then
-              item_str=$(printf "▶ %s %s%s" "$checkbox" "$name" "$status_marker")
-            else
-              item_str=$(printf "  %s %s%s" "$checkbox" "$name" "$status_marker")
-            fi
-            
-            # Pad to column width
-            local padding=$((col_width - ${#item_str}))
-            item_str="${item_str}$(printf '%*s' "$padding" '')"
-            
-            line="${line}${item_str}"
-          fi
-        else
-          # Empty cell
-          line="${line}$(printf '%*s' "$col_width" '')"
+    local name="${item_data%%|*}"
+    local checkbox="[ ]"
+    local status_marker=""
+    
+    if (( selected["$name"] == 1 )); then
+      checkbox="[√]"
+    fi
+    
+    if [[ "$item_data" == *"|installed" ]]; then
+      status_marker=" (installed)"
+    fi
+    
+    if (( is_cursor )); then
+      printf "▶ %s %s%s" "$checkbox" "$name" "$status_marker"
+    else
+      printf "  %s %s%s" "$checkbox" "$name" "$status_marker"
+    fi
+  }
+  
+  # Function to update a single row
+  update_row() {
+    local row=$1
+    local line_num=$((header_lines + row + 1))
+    
+    # Move cursor to the row
+    tput cup $line_num 0 > /dev/tty 2>/dev/null || return
+    
+    # Build the line
+    local col=0
+    local line=""
+    while (( col < num_cols )); do
+      local is_cursor=0
+      if (( col == cursor_col && row == cursor_row )); then
+        is_cursor=1
+      fi
+      
+      local item_str=$(get_item_display $col $row $is_cursor)
+      if [[ -n "$item_str" ]]; then
+        # Pad to column width
+        local padding=$((col_width - ${#item_str}))
+        item_str="${item_str}$(printf '%*s' "$padding" '')"
+        line="${line}${item_str}"
+      else
+        # Empty cell
+        line="${line}$(printf '%*s' "$col_width" '')"
+      fi
+      ((col++))
+    done
+    
+    # Clear to end of line and print
+    tput el > /dev/tty 2>/dev/null
+    printf "  %s" "${line%"${line##*[![:space:]]}"}" > /dev/tty
+  }
+  
+  # Function to redraw the screen (full or incremental)
+  redraw_screen() {
+    if (( needs_full_redraw )) || (( page_start != prev_page_start )); then
+      # Full redraw
+      tput clear > /dev/tty 2>/dev/null || clear > /dev/tty
+      
+      printf "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" > /dev/tty
+      if [[ "$type" == "cask" ]]; then
+        printf "  Select Homebrew Casks to Install\n" > /dev/tty
+      else
+        printf "  Select Mac App Store Apps to Install\n" > /dev/tty
+      fi
+      printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" > /dev/tty
+      
+      # Count selected
+      local selected_count=0
+      for name in "${!selected[@]}"; do
+        if (( selected["$name"] == 1 )); then
+          ((selected_count++))
         fi
-        
-        ((col++))
       done
       
-      # Print the line (trim trailing spaces)
-      printf "  %s\n" "${line%"${line##*[![:space:]]}"}" > /dev/tty
-      ((row++))
-    done
+      local page_end=$((page_start + items_per_page))
+      if (( page_end > total )); then
+        page_end=$total
+      fi
+      printf "  Selected: %d/%d  (Showing items %d-%d)\n\n" "$selected_count" "$total" "$((page_start+1))" "$page_end" > /dev/tty
+      
+      # Display all items
+      local row=0
+      while (( row < num_rows )); do
+        update_row $row
+        printf "\n" > /dev/tty
+        ((row++))
+      done
+      
+      printf "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" > /dev/tty
+      printf "\n  ↑/↓: Navigate column  ←/→: Navigate row  Space: Toggle  Enter: Done  a: All  n: None  q: Quit\n" > /dev/tty
+      
+      needs_full_redraw=0
+      prev_page_start=$page_start
+    else
+      # Incremental update: only update the rows that changed
+      if (( prev_cursor_row != cursor_row || prev_cursor_col != cursor_col )); then
+        # Update previous cursor position
+        if (( prev_cursor_row < num_rows )); then
+          update_row $prev_cursor_row
+          printf "\n" > /dev/tty
+        fi
+        # Update new cursor position
+        if (( cursor_row < num_rows )); then
+          update_row $cursor_row
+          printf "\n" > /dev/tty
+        fi
+      fi
+    fi
     
-    printf "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" > /dev/tty
-    printf "\n  ↑/↓: Navigate column  ←/→: Navigate row  Space: Toggle  Enter: Done  a: All  n: None  q: Quit\n" > /dev/tty
+    # Save current cursor position
+    prev_cursor_col=$cursor_col
+    prev_cursor_row=$cursor_row
   }
   
   # Initial draw
@@ -454,15 +510,15 @@ interactive_selection() {
         # Move up within the same column
         if (( cursor_row > 0 )); then
           ((cursor_row--))
-          needs_redraw=1
         elif (( page_start > 0 )); then
           # Scroll page up
           page_start=$((page_start - num_cols))
           if (( page_start < 0 )); then
             page_start=0
           fi
-          needs_redraw=1
+          needs_full_redraw=1
         fi
+        redraw_screen
         ;;
       DOWN)
         # Move down within the same column
@@ -471,19 +527,19 @@ interactive_selection() {
         if (( next_idx < total )); then
           if (( cursor_row < num_rows - 1 )); then
             ((cursor_row++))
-            needs_redraw=1
           elif (( page_start + items_per_page < total )); then
             # Scroll page down
             page_start=$((page_start + num_cols))
-            needs_redraw=1
+            needs_full_redraw=1
           fi
         fi
+        redraw_screen
         ;;
       LEFT)
         # Move to previous column (same row)
         if (( cursor_col > 0 )); then
           ((cursor_col--))
-          needs_redraw=1
+          redraw_screen
         fi
         ;;
       RIGHT)
@@ -492,7 +548,7 @@ interactive_selection() {
         local next_idx=$(get_item_index $((cursor_col + 1)) $cursor_row)
         if (( next_idx < total && cursor_col < num_cols - 1 )); then
           ((cursor_col++))
-          needs_redraw=1
+          redraw_screen
         fi
         ;;
       SPACE)
@@ -510,7 +566,9 @@ interactive_selection() {
               else
                 selected["$name"]=1
               fi
-              needs_redraw=1
+              # Update just this row
+              update_row $cursor_row
+              printf "\n" > /dev/tty
               break
             fi
             ((item_idx++))
@@ -532,25 +590,21 @@ interactive_selection() {
         for name in "${!selected[@]}"; do
           selected["$name"]=1
         done
-        needs_redraw=1
+        needs_full_redraw=1
+        redraw_screen
         ;;
       NONE)
         # Deselect all items
         for name in "${!selected[@]}"; do
           selected["$name"]=0
         done
-        needs_redraw=1
+        needs_full_redraw=1
+        redraw_screen
         ;;
       *)
         # Ignore other keys
         ;;
     esac
-    
-    # Redraw if needed
-    if (( needs_redraw )); then
-      redraw_screen
-      needs_redraw=0
-    fi
   done
   
   # Cleanup
