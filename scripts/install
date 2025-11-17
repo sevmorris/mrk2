@@ -308,9 +308,41 @@ interactive_selection() {
     selected["$name"]=0
   done
   
-  local cursor_pos=0  # Current cursor position (0-indexed)
+  # Fixed layout: 4 columns, 20 rows (80 items visible at once)
+  local num_cols=4
+  local num_rows=20
+  local items_per_page=$((num_cols * num_rows))  # 80 items
+  
+  # Cursor position: column (0-3) and row (0-19) within visible page
+  local cursor_col=0
+  local cursor_row=0
+  local page_start=0  # First item index of current page (for scrolling)
   local done=0
   local needs_redraw=1
+  
+  # Calculate maximum item name length for column width
+  local max_name_len=0
+  for i in "${!items[@]}"; do
+    local item_data="${items[$i]}"
+    local name="${item_data%%|*}"
+    local status_marker=""
+    if [[ "$item_data" == *"|installed" ]]; then
+      status_marker=" (installed)"
+    fi
+    local item_len=$(( ${#name} + ${#status_marker} + 5 ))  # 5 for " [√] " or "  [ ] "
+    if (( item_len > max_name_len )); then
+      max_name_len=$item_len
+    fi
+  done
+  
+  local col_width=$((max_name_len + 2))  # Add spacing between columns
+  
+  # Function to get item index from column/row position
+  get_item_index() {
+    local col=$1
+    local row=$2
+    echo $((page_start + col * num_rows + row))
+  }
   
   # Function to redraw the screen
   redraw_screen() {
@@ -333,49 +365,19 @@ interactive_selection() {
       fi
     done
     
-    printf "  Selected: %d/%d\n\n" "$selected_count" "$total" > /dev/tty
-    
-    # Get terminal width
-    local term_width
-    term_width=$(tput cols 2>/dev/null || echo 80)
-    
-    # Calculate maximum item name length (including status markers and formatting)
-    local max_name_len=0
-    local idx=0
-    for i in "${!items[@]}"; do
-      local item_data="${items[$i]}"
-      local name="${item_data%%|*}"
-      local status_marker=""
-      if [[ "$item_data" == *"|installed" ]]; then
-        status_marker=" (installed)"
-      fi
-      # Format: "▶ [√] name (installed)" or "  [ ] name"
-      local item_len=$(( ${#name} + ${#status_marker} + 5 ))  # 5 for " [√] " or "  [ ] "
-      if (( item_len > max_name_len )); then
-        max_name_len=$item_len
-      fi
-    done
-    
-    # Calculate number of columns (leave some margin)
-    local col_width=$((max_name_len + 2))  # Add spacing between columns
-    local num_cols=$(( (term_width - 4) / col_width ))  # -4 for left margin
-    if (( num_cols < 1 )); then
-      num_cols=1
+    local page_end=$((page_start + items_per_page))
+    if (( page_end > total )); then
+      page_end=$total
     fi
-    if (( num_cols > total )); then
-      num_cols=$total
-    fi
+    printf "  Selected: %d/%d  (Showing items %d-%d)\n\n" "$selected_count" "$total" "$((page_start+1))" "$page_end" > /dev/tty
     
-    # Calculate number of rows
-    local num_rows=$(( (total + num_cols - 1) / num_cols ))  # Ceiling division
-    
-    # Display items in multi-column format (fill horizontally: left to right, then next row)
+    # Display items in 4-column, 20-row format
     local row=0
     while (( row < num_rows )); do
       local col=0
       local line=""
       while (( col < num_cols )); do
-        local idx=$(( col + row * num_cols ))
+        local idx=$(get_item_index $col $row)
         
         if (( idx < total )); then
           # Get item data
@@ -405,7 +407,7 @@ interactive_selection() {
             
             # Build the item string
             local item_str
-            if (( idx == cursor_pos )); then
+            if (( col == cursor_col && row == cursor_row )); then
               item_str=$(printf "▶ %s %s%s" "$checkbox" "$name" "$status_marker")
             else
               item_str=$(printf "  %s %s%s" "$checkbox" "$name" "$status_marker")
@@ -431,7 +433,7 @@ interactive_selection() {
     done
     
     printf "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" > /dev/tty
-    printf "\n  ↑/↓: Navigate  Space: Toggle  Enter: Done  a: Select All  n: Deselect All  q: Quit\n" > /dev/tty
+    printf "\n  ↑/↓: Navigate column  ←/→: Navigate row  Space: Toggle  Enter: Done  a: All  n: None  q: Quit\n" > /dev/tty
   }
   
   # Initial draw
@@ -449,35 +451,71 @@ interactive_selection() {
     
     case "$key" in
       UP)
-        if (( cursor_pos > 0 )); then
-          ((cursor_pos--))
+        # Move up within the same column
+        if (( cursor_row > 0 )); then
+          ((cursor_row--))
+          needs_redraw=1
+        elif (( page_start > 0 )); then
+          # Scroll page up
+          page_start=$((page_start - num_cols))
+          if (( page_start < 0 )); then
+            page_start=0
+          fi
           needs_redraw=1
         fi
         ;;
       DOWN)
-        if (( cursor_pos < total - 1 )); then
-          ((cursor_pos++))
+        # Move down within the same column
+        local current_idx=$(get_item_index $cursor_col $cursor_row)
+        local next_idx=$(get_item_index $cursor_col $((cursor_row + 1)))
+        if (( next_idx < total )); then
+          if (( cursor_row < num_rows - 1 )); then
+            ((cursor_row++))
+            needs_redraw=1
+          elif (( page_start + items_per_page < total )); then
+            # Scroll page down
+            page_start=$((page_start + num_cols))
+            needs_redraw=1
+          fi
+        fi
+        ;;
+      LEFT)
+        # Move to previous column (same row)
+        if (( cursor_col > 0 )); then
+          ((cursor_col--))
+          needs_redraw=1
+        fi
+        ;;
+      RIGHT)
+        # Move to next column (same row)
+        local current_idx=$(get_item_index $cursor_col $cursor_row)
+        local next_idx=$(get_item_index $((cursor_col + 1)) $cursor_row)
+        if (( next_idx < total && cursor_col < num_cols - 1 )); then
+          ((cursor_col++))
           needs_redraw=1
         fi
         ;;
       SPACE)
         # Toggle selection for current item
-        local idx=0
-        for i in "${!items[@]}"; do
-          if (( idx == cursor_pos )); then
-            local item_data="${items[$i]}"
-            local name="${item_data%%|*}"
-            # Toggle selection
-            if (( selected["$name"] == 1 )); then
-              selected["$name"]=0
-            else
-              selected["$name"]=1
+        local idx=$(get_item_index $cursor_col $cursor_row)
+        if (( idx < total )); then
+          local item_idx=0
+          for i in "${!items[@]}"; do
+            if (( item_idx == idx )); then
+              local item_data="${items[$i]}"
+              local name="${item_data%%|*}"
+              # Toggle selection
+              if (( selected["$name"] == 1 )); then
+                selected["$name"]=0
+              else
+                selected["$name"]=1
+              fi
+              needs_redraw=1
+              break
             fi
-            needs_redraw=1
-            break
-          fi
-          ((idx++))
-        done
+            ((item_idx++))
+          done
+        fi
         ;;
       ENTER)
         done=1
@@ -504,30 +542,7 @@ interactive_selection() {
         needs_redraw=1
         ;;
       *)
-        # Try to interpret as number
-        if [[ "$key" =~ ^[0-9]+$ ]]; then
-          local num=$((key))
-          if (( num >= 1 && num <= total )); then
-            cursor_pos=$((num - 1))
-            # Also toggle selection
-            local idx=0
-            for i in "${!items[@]}"; do
-              if (( idx == cursor_pos )); then
-                local item_data="${items[$i]}"
-                local name="${item_data%%|*}"
-                # Toggle selection
-                if (( selected["$name"] == 1 )); then
-                  selected["$name"]=0
-                else
-                  selected["$name"]=1
-                fi
-                needs_redraw=1
-                break
-              fi
-              ((idx++))
-            done
-          fi
-        fi
+        # Ignore other keys
         ;;
     esac
     
