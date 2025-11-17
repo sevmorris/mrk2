@@ -26,7 +26,7 @@ make fix-exec && make install
 - **Applications** via Homebrew Casks (browsers, editors, utilities, etc.) — **interactive selection**
 - **Mac App Store apps** via `mas` (Final Cut Pro, Logic Pro, etc.) — **interactive selection**
 
-> **Note:** Casks and Mac App Store apps are presented interactively for selection. Press ENTER (defaults to "No") or type "n" to skip, or type "y" to install. CLI tools (formulae) are installed automatically without prompts.
+> **Note:** CLI tools (formulae) are installed automatically without prompts. Casks and Mac App Store apps are presented in an interactive multi-column selection form where you can choose which items to install.
 
 ---
 
@@ -67,7 +67,17 @@ make doctor       # run Homebrew doctor
 ./scripts/install --help
 ```
 
-**Interactive Mode:** By default, the installer will prompt you for each Cask and Mac App Store app. Press ENTER or type "n" to skip (default), or type "y" to install. CLI tools (formulae) are always installed automatically.
+**Interactive Selection Form:** Casks and Mac App Store apps are displayed in a multi-column selection interface (4 columns × 20 rows, showing 80 items at once). Use the following controls:
+
+- **↑/↓ Arrow Keys** — Navigate up/down within the current column
+- **←/→ Arrow Keys** — Navigate left/right between columns (same row)
+- **Space** — Toggle selection for the current item
+- **Enter** — Finish selection and proceed with installation
+- **a** — Select all items
+- **n** — Deselect all items
+- **q** — Quit (deselects all and exits)
+
+Items show `[ ]` when unselected and `[√]` when selected. Items already installed are marked with "(installed)" and will be skipped during installation even if selected.
 
 ### Check Installation Status
 
