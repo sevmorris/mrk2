@@ -22,11 +22,11 @@ make fix-exec && make install
 ## What it installs
 
 - **Homebrew** (if not already installed)
-- **CLI tools** from the Brewfile (ripgrep, shellcheck, languages, etc.) — installed automatically
+- **CLI tools** (formulae) from the Brewfile (ripgrep, shellcheck, languages, etc.) — **interactive selection**
 - **Applications** via Homebrew Casks (browsers, editors, utilities, etc.) — **interactive selection**
 - **Mac App Store apps** via `mas` (Final Cut Pro, Logic Pro, etc.) — **interactive selection**
 
-> **Note:** CLI tools (formulae) are installed automatically without prompts. Casks and Mac App Store apps are presented in an interactive multi-column selection form where you can choose which items to install.
+> **Note:** All packages (formulae, casks, and Mac App Store apps) are presented in an interactive multi-column selection form where you can choose which items to install. Items already installed are marked and will be skipped during installation.
 
 ---
 
@@ -63,14 +63,14 @@ make doctor       # run Homebrew doctor
 # Skip Homebrew formulae (CLI tools, no prompts)
 ./scripts/install --no-formulae
 
-# Only install Homebrew packages (no casks, no MAS, fully automated)
+# Only install Homebrew formulae (no casks, no MAS, but still interactive)
 ./scripts/install --only-formulae
 
 # See all options
 ./scripts/install --help
 ```
 
-**Interactive Selection Form:** Casks and Mac App Store apps are displayed in a multi-column selection interface (4 columns × 20 rows, showing 80 items at once). Use the following controls:
+**Interactive Selection Form:** Formulae (CLI tools), casks (GUI apps), and Mac App Store apps are displayed in a multi-column selection interface (4 columns × 20 rows, showing 80 items at once). You'll see three separate selection screens, one for each type. Use the following controls:
 
 - **↑/↓ Arrow Keys** — Navigate up/down within the current column
 - **←/→ Arrow Keys** — Navigate left/right between columns (same row)
