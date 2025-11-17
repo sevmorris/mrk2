@@ -390,33 +390,16 @@ interactive_selection() {
   local needs_full_redraw=1
   local header_lines=3  # Number of lines before the item list (title + stats + blank)
   
-  # Use a fixed column width - simpler and more reliable
-  # Don't try to calculate based on content, just use a fixed width
-  local col_width=40  # Fixed width per column
+  # Simple layout - no complex width calculations needed
   
-  # Calculate minimum terminal width needed (4 columns + padding)
-  # This needs to be available to redraw_screen, so define it early
-  local min_terminal_width=$((col_width * num_cols + 4))  # 4 for item row padding
+  # Simple terminal width check
+  local min_terminal_width=80
   
   # Function to get terminal width
   get_terminal_width() {
     local width
     width=$(tput cols 2>/dev/null || echo 80)
     echo "$width"
-  }
-  
-  # Function to strip ANSI escape codes and get visible length
-  # ANSI codes don't take up visual space but are counted in ${#string}
-  strip_ansi() {
-    # Remove ANSI escape sequences (ESC[ ... m)
-    echo "$1" | sed 's/\x1b\[[0-9;]*m//g'
-  }
-  
-  # Function to get visible width (without ANSI codes)
-  visible_width() {
-    local stripped
-    stripped=$(strip_ansi "$1")
-    echo ${#stripped}
   }
   
   # Function to get item index from column/row position
@@ -426,45 +409,7 @@ interactive_selection() {
     echo $((page_start + col * num_rows + row))
   }
   
-  # Function to get item display string (returns plain text for width calculation)
-  get_item_display_plain() {
-    local name="$1"
-    local is_selected="$2"
-    local is_installed="$3"
-    local is_cursor="$4"
-    
-    local checkbox="[ ]"
-    if (( is_selected )); then
-      checkbox="[√]"
-    fi
-    
-    local status_marker=""
-    if (( is_installed )); then
-      status_marker=" (installed)"
-    fi
-    
-    # Calculate available width for the name
-    # Account for: cursor (2 chars) or spaces (2 chars) + checkbox (3 chars) + space (1 char) + status
-    local prefix_len=6  # "▶ [√] " or "  [ ] " (6 chars including space after checkbox)
-    local status_len=${#status_marker}
-    # Use fixed width - allow up to 30 chars for name + status
-    # Note: col_width is defined in parent scope, use it directly
-    local max_name_display_len=$((30 - status_len))
-    
-    # Truncate name if it's too long
-    local display_name="$name"
-    if (( ${#name} > max_name_display_len )); then
-      display_name="${name:0:$((max_name_display_len - 3))}..."
-    fi
-    
-    if (( is_cursor )); then
-      echo "▶ ${checkbox} ${display_name}${status_marker}"
-    else
-      echo "  ${checkbox} ${display_name}${status_marker}"
-    fi
-  }
-  
-  # Function to get item display string with colors
+  # Function to get item display string (simple - no colors, no truncation)
   get_item_display() {
     local col=$1
     local row=$2
@@ -493,74 +438,32 @@ interactive_selection() {
     fi
     
     local name="${item_data%%|*}"
-    local is_selected=0
-    if (( selected["$name"] == 1 )); then
-      is_selected=1
-    fi
-    
-    local is_installed=0
-    if [[ "$item_data" == *"|installed" ]]; then
-      is_installed=1
-    fi
-    
     local checkbox="[ ]"
-    if (( is_selected )); then
+    if (( selected["$name"] == 1 )); then
       checkbox="[√]"
     fi
     
     local status_marker=""
-    if (( is_installed )); then
+    if [[ "$item_data" == *"|installed" ]]; then
       status_marker=" (installed)"
     fi
     
-    # Calculate available width for the name
-    local prefix_len=6  # "▶ [√] " or "  [ ] " (6 chars including space after checkbox)
-    local status_len=${#status_marker}
-    # Use fixed width - allow up to 30 chars for name + status
-    local max_name_display_len=$((30 - status_len))
-    
-    # Truncate name if it's too long
-    local display_name="$name"
-    if (( ${#name} > max_name_display_len )); then
-      display_name="${name:0:$((max_name_display_len - 3))}..."
-    fi
-    
-    # Apply colors based on state
-    local checkbox_color=""
-    local name_color=""
-    local status_color=""
-    
-    if (( is_selected )); then
-      checkbox_color="${color_green}"
-      name_color="${color_bold}${color_green}"
-    else
-      checkbox_color="${color_white}"
-      name_color="${color_white}"
-    fi
-    
-    if (( is_installed )); then
-      status_color="${color_yellow}"
-    fi
-    
+    # Simple display: cursor indicator, checkbox, name, status
     if (( is_cursor )); then
-      # Cursor: use reverse video for emphasis
-      printf "${color_reverse}▶${color_reset} ${checkbox_color}%s${color_reset} ${name_color}%s${color_reset}${status_color}%s${color_reset}" \
-        "$checkbox" "$display_name" "$status_marker"
+      echo "▶ $checkbox $name$status_marker"
     else
-      printf "  ${checkbox_color}%s${color_reset} ${name_color}%s${color_reset}${status_color}%s${color_reset}" \
-        "$checkbox" "$display_name" "$status_marker"
+      echo "  $checkbox $name$status_marker"
     fi
   }
   
-  # Function to build a row's content (returns the line string)
-  # Use visible width to calculate padding correctly (ignoring ANSI codes)
+  # Function to build a row's content (simple version)
   build_row_content() {
     local row=$1
     local cursor_col_pos=$2
     local cursor_row_pos=$3
     
     local col=0
-    local line=""
+    local parts=()
     
     while (( col < num_cols )); do
       local is_cursor=0
@@ -570,61 +473,18 @@ interactive_selection() {
       
       local idx=$(get_item_index $col $row)
       if (( idx < total )); then
-        # Get item data
-        local item_idx=0
-        local item_data=""
-        for i in "${!items[@]}"; do
-          if (( item_idx == idx )); then
-            item_data="${items[$i]}"
-            break
-          fi
-          ((item_idx++))
-        done
-        
-        if [[ -n "$item_data" ]]; then
-          # Get the colored display string
-          local item_str
-          item_str=$(get_item_display $col $row $is_cursor)
-          
-          # Get visible width (without ANSI codes)
-          local vis_width
-          vis_width=$(visible_width "$item_str")
-          
-          # Calculate padding needed
-          local padding=$((col_width - vis_width))
-          
-          # Build column: item + padding spaces
-          if (( padding > 0 )); then
-            item_str="${item_str}$(printf '%*s' "$padding" '')"
-          fi
-          
-          if [[ -z "$line" ]]; then
-            line="$item_str"
-          else
-            line="${line}  ${item_str}"
-          fi
-        else
-          # Empty cell
-          local empty_str=$(printf '%*s' "$col_width" '')
-          if [[ -z "$line" ]]; then
-            line="$empty_str"
-          else
-            line="${line}  ${empty_str}"
-          fi
-        fi
+        local item_str
+        item_str=$(get_item_display $col $row $is_cursor)
+        # Use printf with fixed width (35 chars) for each column
+        parts+=("$(printf "%-35s" "$item_str")")
       else
-        # Empty cell (beyond total)
-        local empty_str=$(printf '%*s' "$col_width" '')
-        if [[ -z "$line" ]]; then
-          line="$empty_str"
-        else
-          line="${line}  ${empty_str}"
-        fi
+        parts+=("$(printf "%-35s" "")")
       fi
       ((col++))
     done
     
-    echo "$line"
+    # Join with 2 spaces between columns
+    echo "${parts[0]}  ${parts[1]}  ${parts[2]}  ${parts[3]}"
   }
   
   # Function to update a single row (for full redraw)
