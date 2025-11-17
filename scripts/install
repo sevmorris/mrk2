@@ -213,7 +213,9 @@ read_key() {
   }
   
   # Read first character (will timeout after 0.1 seconds)
-  IFS= read -r -n 1 -t 0.1 key < /dev/tty 2>/dev/null || key=""
+  # Use a slightly longer timeout to ensure Enter is captured
+  IFS= read -r -n 1 -t 0.2 key < /dev/tty 2>/dev/null
+  local read_status=$?
   
   # If we got escape sequence, read more
   if [[ "$key" == $'\033' ]]; then
@@ -234,7 +236,7 @@ read_key() {
     else
       key=""
     fi
-  elif [[ -z "$key" ]]; then
+  elif [[ $read_status -ne 0 ]] || [[ -z "$key" ]]; then
     # Timeout or empty, restore and return
     stty "$old_stty" < /dev/tty 2>/dev/null
     echo -n ""
@@ -242,6 +244,7 @@ read_key() {
   elif [[ "$key" == " " ]]; then
     key="SPACE"
   elif [[ "$key" == $'\n' ]] || [[ "$key" == $'\r' ]]; then
+    # Handle Enter key
     key="ENTER"
   elif [[ "$key" == "q" ]] || [[ "$key" == "Q" ]]; then
     key="QUIT"
@@ -249,6 +252,9 @@ read_key() {
     key="ALL"
   elif [[ "$key" == "n" ]] || [[ "$key" == "N" ]]; then
     key="NONE"
+  elif [[ "$key" == "d" ]] || [[ "$key" == "D" ]]; then
+    # Alternative way to finish (d for done)
+    key="ENTER"
   fi
   
   # Restore terminal settings immediately
@@ -470,7 +476,7 @@ interactive_selection() {
       done
       
       printf "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" > /dev/tty
-      printf "\n  ↑/↓: Navigate column  ←/→: Navigate row  Space: Toggle  Enter: Done  a: All  n: None  q: Quit\n" > /dev/tty
+      printf "\n  ↑/↓: Navigate column  ←/→: Navigate row  Space: Toggle  Enter/d: Done  a: All  n: None  q: Quit\n" > /dev/tty
       
       needs_full_redraw=0
       prev_page_start=$page_start
@@ -498,15 +504,15 @@ interactive_selection() {
   # Initial draw
   redraw_screen
   
-  while (( ! done )); do
-    # Read keypress
-    local key
-    key=$(read_key)
-    
-    # Check if we should exit (in case done was set elsewhere)
+  while true; do
+    # Check if we should exit before reading
     if (( done )); then
       break
     fi
+    
+    # Read keypress
+    local key
+    key=$(read_key)
     
     # Handle empty/timeout - redraw to keep screen fresh
     if [[ -z "$key" ]]; then
@@ -615,10 +621,17 @@ interactive_selection() {
     esac
     
     # Check if we should exit after processing the key
+    # This must be checked here, not just at the start of the loop
     if (( done )); then
       break
     fi
   done
+  
+  # Ensure we exit if done was set
+  if (( done )); then
+    # Already breaking, but ensure cleanup happens
+    :
+  fi
   
   # Cleanup
   cleanup_terminal
