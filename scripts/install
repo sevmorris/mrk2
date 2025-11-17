@@ -254,12 +254,20 @@ interactive_selection() {
       local item_data="${items[$i]}"
       local name="${item_data%%|*}"
       local check=" "
+      local status_marker=""
       
       if (( selected["$name"] == 1 )); then
         check="√"
       fi
       
-      printf "  [%3d] %s %s\n" "$idx" "$check" "$name" > /dev/tty
+      # Check if item is marked as already installed (last field)
+      # For casks: "name|line|installed" or "name|line|"
+      # For MAS: "name|line|id|installed" or "name|line|id|"
+      if [[ "$item_data" == *"|installed" ]]; then
+        status_marker=" (already installed)"
+      fi
+      
+      printf "  [%3d] %s %s%s\n" "$idx" "$check" "$name" "$status_marker" > /dev/tty
       ((idx++))
     done
     
@@ -393,16 +401,18 @@ install_brewfile() {
         continue
       fi
 
-      # Check if already installed
+      # Check if already installed (but still add to selection list)
       local already_installed=0
       if brew list --cask "$cask" >/dev/null 2>&1; then
         already_installed=1
-        log "Cask '$cask' is already installed, skipping"
-        continue
       fi
 
-      # Add to selection list
-      cask_items+=("$cask|$line")
+      # Add to selection list (even if already installed, so user can see all options)
+      if (( already_installed )); then
+        cask_items+=("$cask|$line|installed")
+      else
+        cask_items+=("$cask|$line|")
+      fi
       cask_lines["$cask"]="$line"
       continue
     fi
@@ -422,13 +432,15 @@ install_brewfile() {
       if command -v mas >/dev/null 2>&1; then
         if mas list 2>/dev/null | grep -q "^$app_id "; then
           already_installed=1
-          log "MAS app '$app_name' (id: $app_id) is already installed, skipping"
-          continue
         fi
       fi
 
-      # Add to selection list
-      mas_items+=("$app_name|$line|$app_id")
+      # Add to selection list (even if already installed, so user can see all options)
+      if (( already_installed )); then
+        mas_items+=("$app_name|$line|$app_id|installed")
+      else
+        mas_items+=("$app_name|$line|$app_id|")
+      fi
       mas_lines["$app_name"]="$line"
       continue
     fi
@@ -448,13 +460,15 @@ install_brewfile() {
       if command -v mas >/dev/null 2>&1; then
         if mas list 2>/dev/null | grep -q "^$app_id "; then
           already_installed=1
-          log "MAS app '$app_name' (id: $app_id) is already installed, skipping"
-          continue
         fi
       fi
 
-      # Add to selection list
-      mas_items+=("$app_name|$line|$app_id")
+      # Add to selection list (even if already installed, so user can see all options)
+      if (( already_installed )); then
+        mas_items+=("$app_name|$line|$app_id|installed")
+      else
+        mas_items+=("$app_name|$line|$app_id|")
+      fi
       mas_lines["$app_name"]="$line"
       continue
     fi
@@ -469,10 +483,15 @@ install_brewfile() {
   if (( ${#cask_items[@]} > 0 )) && (( ! NO_CASKS )); then
     interactive_selection "cask" cask_items selected_casks
     
-    # Add selected casks to temp Brewfile
+    # Add selected casks to temp Brewfile (skip already installed ones)
     local selected_count=0
     for name in "${!selected_casks[@]}"; do
       if (( selected_casks["$name"] == 1 )); then
+        # Check if already installed - skip if so
+        if brew list --cask "$name" >/dev/null 2>&1; then
+          log "Cask '$name' is already installed, skipping installation"
+          continue
+        fi
         echo "${cask_lines[$name]}" >> "$temp_brewfile"
         ((selected_count++))
       fi
@@ -485,10 +504,29 @@ install_brewfile() {
   if (( ${#mas_items[@]} > 0 )) && (( ! NO_MAS )); then
     interactive_selection "mas" mas_items selected_mas
     
-    # Add selected MAS apps to temp Brewfile
+    # Add selected MAS apps to temp Brewfile (skip already installed ones)
     local selected_count=0
     for name in "${!selected_mas[@]}"; do
       if (( selected_mas["$name"] == 1 )); then
+        # Find the app_id from mas_items to check if installed
+        local app_id=""
+        for item_data in "${mas_items[@]}"; do
+          if [[ "$item_data" =~ ^$name\| ]]; then
+            # Extract app_id (third field)
+            local fields=(${item_data//|/ })
+            app_id="${fields[2]}"
+            break
+          fi
+        done
+        
+        # Check if already installed - skip if so
+        if [[ -n "$app_id" ]] && command -v mas >/dev/null 2>&1; then
+          if mas list 2>/dev/null | grep -q "^$app_id "; then
+            log "MAS app '$name' (id: $app_id) is already installed, skipping installation"
+            continue
+          fi
+        fi
+        
         echo "${mas_lines[$name]}" >> "$temp_brewfile"
         ((selected_count++))
       fi
