@@ -447,7 +447,42 @@ interactive_selection() {
     echo $((page_start + col * num_rows + row))
   }
   
-  # Function to get item display string
+  # Function to get item display string (returns plain text for width calculation)
+  get_item_display_plain() {
+    local name="$1"
+    local is_selected="$2"
+    local is_installed="$3"
+    local is_cursor="$4"
+    
+    local checkbox="[ ]"
+    if (( is_selected )); then
+      checkbox="[√]"
+    fi
+    
+    local status_marker=""
+    if (( is_installed )); then
+      status_marker=" (installed)"
+    fi
+    
+    # Calculate available width for the name
+    local prefix_len=5  # "▶ [√] " or "  [ ] "
+    local status_len=${#status_marker}
+    local max_name_display_len=$((max_allowed_width - prefix_len - status_len))
+    
+    # Truncate name if it's too long
+    local display_name="$name"
+    if (( ${#name} > max_name_display_len )); then
+      display_name="${name:0:$((max_name_display_len - 3))}..."
+    fi
+    
+    if (( is_cursor )); then
+      echo "▶ ${checkbox} ${display_name}${status_marker}"
+    else
+      echo "  ${checkbox} ${display_name}${status_marker}"
+    fi
+  }
+  
+  # Function to get item display string with colors
   get_item_display() {
     local col=$1
     local row=$2
@@ -476,18 +511,27 @@ interactive_selection() {
     fi
     
     local name="${item_data%%|*}"
-    local checkbox="[ ]"
-    local status_marker=""
-    
+    local is_selected=0
     if (( selected["$name"] == 1 )); then
+      is_selected=1
+    fi
+    
+    local is_installed=0
+    if [[ "$item_data" == *"|installed" ]]; then
+      is_installed=1
+    fi
+    
+    local checkbox="[ ]"
+    if (( is_selected )); then
       checkbox="[√]"
     fi
     
-    if [[ "$item_data" == *"|installed" ]]; then
+    local status_marker=""
+    if (( is_installed )); then
       status_marker=" (installed)"
     fi
     
-    # Calculate available width for the name (accounting for checkbox, cursor, and status)
+    # Calculate available width for the name
     local prefix_len=5  # "▶ [√] " or "  [ ] "
     local status_len=${#status_marker}
     local max_name_display_len=$((max_allowed_width - prefix_len - status_len))
@@ -503,7 +547,7 @@ interactive_selection() {
     local name_color=""
     local status_color=""
     
-    if (( selected["$name"] == 1 )); then
+    if (( is_selected )); then
       checkbox_color="${color_green}"
       name_color="${color_bold}${color_green}"
     else
@@ -511,7 +555,7 @@ interactive_selection() {
       name_color="${color_white}"
     fi
     
-    if [[ -n "$status_marker" ]]; then
+    if (( is_installed )); then
       status_color="${color_yellow}"
     fi
     
@@ -540,18 +584,52 @@ interactive_selection() {
         is_cursor=1
       fi
       
-      local item_str=$(get_item_display $col $row $is_cursor)
-      if [[ -n "$item_str" ]]; then
-        # Pad to column width using visible width (without ANSI codes)
-        local visible_len
-        visible_len=$(visible_width "$item_str")
-        local padding=$((col_width - visible_len))
-        if (( padding > 0 )); then
-          item_str="${item_str}$(printf '%*s' "$padding" '')"
+      local idx=$(get_item_index $col $row)
+      if (( idx < total )); then
+        # Get item data for plain width calculation
+        local item_idx=0
+        local item_data=""
+        for i in "${!items[@]}"; do
+          if (( item_idx == idx )); then
+            item_data="${items[$i]}"
+            break
+          fi
+          ((item_idx++))
+        done
+        
+        if [[ -n "$item_data" ]]; then
+          local name="${item_data%%|*}"
+          local is_selected=0
+          if (( selected["$name"] == 1 )); then
+            is_selected=1
+          fi
+          
+          local is_installed=0
+          if [[ "$item_data" == *"|installed" ]]; then
+            is_installed=1
+          fi
+          
+          # Get plain text version for width calculation
+          local plain_text
+          plain_text=$(get_item_display_plain "$name" $is_selected $is_installed $is_cursor)
+          local plain_len=${#plain_text}
+          
+          # Get colored version for display
+          local item_str
+          item_str=$(get_item_display $col $row $is_cursor)
+          
+          # Pad to column width
+          local padding=$((col_width - plain_len))
+          if (( padding > 0 )); then
+            item_str="${item_str}$(printf '%*s' "$padding" '')"
+          fi
+          line_content="${line_content}${item_str}"
+        else
+          # Empty cell
+          line_content="${line_content}$(printf '%*s' "$col_width" '')"
         fi
-        line_content="${line_content}${item_str}"
       else
-        # Empty cell
+        # Empty cell (beyond total items)
         line_content="${line_content}$(printf '%*s' "$col_width" '')"
       fi
       ((col++))
@@ -611,11 +689,15 @@ interactive_selection() {
       # Stats line
       printf "${color_cyan}Selected: ${color_green}$selected_count${color_reset}/${color_white}$total${color_reset}  |  Showing: ${color_white}$((page_start+1))-$page_end${color_reset} of $total\n\n" > /dev/tty
       
-      # Display all items
+      # Display all items - ensure each line is properly formatted
       local row=0
       while (( row < num_rows )); do
-        local line_content=$(build_row_content $row $cursor_col $cursor_row)
-        printf "%s\n" "$line_content" > /dev/tty
+        local line_content
+        line_content=$(build_row_content $row $cursor_col $cursor_row)
+        # Clear to end of line before printing to ensure clean output
+        printf "%s" "$line_content" > /dev/tty
+        tput el > /dev/tty 2>/dev/null
+        printf "\n" > /dev/tty
         ((row++))
       done
       
@@ -631,20 +713,24 @@ interactive_selection() {
         # Update previous cursor position (removes cursor indicator)
         if (( prev_cursor_row < num_rows )); then
           local line_num=$((header_lines + prev_cursor_row + 1))
-          tput cup $line_num 0 > /dev/tty 2>/dev/null || return
-          tput el > /dev/tty 2>/dev/null
-          local line_content=$(build_row_content $prev_cursor_row $prev_cursor_col $prev_cursor_row)
-          printf "%s" "$line_content" > /dev/tty
-          tput el > /dev/tty 2>/dev/null
+          if tput cup $line_num 0 > /dev/tty 2>/dev/null; then
+            tput el > /dev/tty 2>/dev/null
+            local line_content
+            line_content=$(build_row_content $prev_cursor_row $prev_cursor_col $prev_cursor_row)
+            printf "%s" "$line_content" > /dev/tty
+            tput el > /dev/tty 2>/dev/null
+          fi
         fi
         # Update new cursor position (adds cursor indicator)
         if (( cursor_row < num_rows )); then
           local line_num=$((header_lines + cursor_row + 1))
-          tput cup $line_num 0 > /dev/tty 2>/dev/null || return
-          tput el > /dev/tty 2>/dev/null
-          local line_content=$(build_row_content $cursor_row $cursor_col $cursor_row)
-          printf "%s" "$line_content" > /dev/tty
-          tput el > /dev/tty 2>/dev/null
+          if tput cup $line_num 0 > /dev/tty 2>/dev/null; then
+            tput el > /dev/tty 2>/dev/null
+            local line_content
+            line_content=$(build_row_content $cursor_row $cursor_col $cursor_row)
+            printf "%s" "$line_content" > /dev/tty
+            tput el > /dev/tty 2>/dev/null
+          fi
         fi
       fi
     fi
@@ -735,11 +821,13 @@ interactive_selection() {
               fi
               # Update just this row
               local line_num=$((header_lines + cursor_row + 1))
-              tput cup $line_num 0 > /dev/tty 2>/dev/null || return
-              tput el > /dev/tty 2>/dev/null
-              local line_content=$(build_row_content $cursor_row $cursor_col $cursor_row)
-              printf "%s" "$line_content" > /dev/tty
-              tput el > /dev/tty 2>/dev/null
+              if tput cup $line_num 0 > /dev/tty 2>/dev/null; then
+                tput el > /dev/tty 2>/dev/null
+                local line_content
+                line_content=$(build_row_content $cursor_row $cursor_col $cursor_row)
+                printf "%s" "$line_content" > /dev/tty
+                tput el > /dev/tty 2>/dev/null
+              fi
               break
             fi
             ((item_idx++))
