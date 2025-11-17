@@ -12,7 +12,7 @@ brew "gnupg"
 brew "htop"
 brew "lsd"
 brew "lzip"
-brew "mas"
+#brew "mas"
 brew "moreutils"
 brew "most"
 brew "nano"
@@ -65,7 +65,7 @@ cask "calibre"
 cask "cryptomator"
 cask "descript"
 cask "discord"
-# cask "dropbox"
+#cask "dropbox"
 cask "etrecheckpro"
 cask "farrago"
 cask "firefox"
@@ -78,7 +78,7 @@ cask "google-drive"
 cask "gpg-suite-no-mail"
 cask "hammerspoon"
 cask "handbrake"
-# cask "helium-browser"
+cask "helium-browser"
 cask "hot"
 cask "ilok-license-manager"
 cask "inkscape"
@@ -118,29 +118,29 @@ cask "timemachineeditor"
 cask "typora"
 cask "utm"
 cask "veracrypt"
-cask "vivaldi"
+#cask "vivaldi"
 cask "vlc"
 cask "waves-central"
 cask "whatsapp"
 cask "zoom"
 
 # Mac App Store Apps
-mas "Amphetamine", id: 937984704
-mas "BetterSnapTool", id: 417375580
-mas "Blackmagic Disk Speed Test", id: 425264550
-mas "Chrono Plus", id: 946047238
-mas "Compressor", id: 424390742
-mas "Encrypto", id: 935235287
-mas "Final Cut Pro", id: 424389933
-mas "GarageBand", id: 682658836
-mas "Hush", id: 1664181766
-mas "iMovie", id: 408981434
-mas "Keynote", id: 409183694
-mas "Logic Pro", id: 634148309
-mas "NextDNS", id: 1464122853
-mas "Numbers", id: 409203825
-mas "Pages", id: 409201541
-mas "Parcel", id: 639968404
-mas "Pixelmator Pro", id: 1289583905
-mas "Pure Paste", id: 1611378436
-mas "Speedtest", id: 1153157709
+#mas "Amphetamine", id: 937984704
+#mas "BetterSnapTool", id: 417375580
+#mas "Blackmagic Disk Speed Test", id: 425264550
+#mas "Chrono Plus", id: 946047238
+#mas "Compressor", id: 424390742
+#mas "Encrypto", id: 935235287
+#mas "Final Cut Pro", id: 424389933
+#mas "GarageBand", id: 682658836
+#mas "Hush", id: 1664181766
+#mas "iMovie", id: 408981434
+#mas "Keynote", id: 409183694
+#mas "Logic Pro", id: 634148309
+#mas "NextDNS", id: 1464122853
+#mas "Numbers", id: 409203825
+#mas "Pages", id: 409201541
+#mas "Parcel", id: 639968404
+#mas "Pixelmator Pro", id: 1289583905
+#mas "Pure Paste", id: 1611378436
+#mas "Speedtest", id: 1153157709
