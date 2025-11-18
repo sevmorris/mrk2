@@ -249,6 +249,143 @@ read_key() {
   echo -n "$key"
 }
 
+# Get description for a formula
+# Usage: get_formula_description "formula_name"
+get_formula_description() {
+  local name="$1"
+  case "$name" in
+    "bash")
+      echo "Bourne Again SHell - Modern shell with improved features"
+      ;;
+    "bash-completion@2")
+      echo "Programmable tab completion for Bash 4.1+ - Auto-complete commands and options"
+      ;;
+    "bat")
+      echo "Cat clone with syntax highlighting, Git integration, and automatic paging"
+      ;;
+    "coreutils")
+      echo "GNU core utilities - Enhanced versions of basic Unix tools (ls, cat, chmod, etc.)"
+      ;;
+    "fastfetch")
+      echo "Fast system information display tool - Shows OS, hardware, and software info"
+      ;;
+    "gh")
+      echo "GitHub CLI - Official command-line tool for GitHub"
+      ;;
+    "git")
+      echo "Distributed version control system"
+      ;;
+    "gnupg")
+      echo "GNU Privacy Guard - Encryption and signing tool"
+      ;;
+    "htop")
+      echo "Interactive process viewer and system monitor"
+      ;;
+    "lsd")
+      echo "Modern ls replacement with colors, icons, and tree view support"
+      ;;
+    "lzip")
+      echo "LZMA-based compression tool - High compression ratio file archiver"
+      ;;
+    "moreutils")
+      echo "Collection of useful Unix utilities (sponge, vidir, ts, combine, etc.)"
+      ;;
+    "most")
+      echo "Terminal pager with scrolling and search capabilities"
+      ;;
+    "nano")
+      echo "Simple terminal-based text editor"
+      ;;
+    "nanorc")
+      echo "Syntax highlighting configuration for nano editor"
+      ;;
+    "ncdu")
+      echo "Disk usage analyzer with ncurses interface"
+      ;;
+    "nethogs")
+      echo "Net top tool - Monitor network usage per process"
+      ;;
+    "nmap")
+      echo "Network exploration and security auditing tool"
+      ;;
+    "openssh")
+      echo "OpenSSH client and server for secure remote access"
+      ;;
+    "osx-cpu-temp")
+      echo "CPU temperature monitor for macOS"
+      ;;
+    "paperkey")
+      echo "Extract secret keys from GnuPG keyrings for backup"
+      ;;
+    "pinentry-mac")
+      echo "PIN entry dialog for GnuPG on macOS"
+      ;;
+    "pwgen")
+      echo "Password generator utility"
+      ;;
+    "qemu")
+      echo "Generic machine emulator and virtualizer"
+      ;;
+    "qrencode")
+      echo "QR Code generator from text strings"
+      ;;
+    "speedtest-cli")
+      echo "Command-line interface for testing internet bandwidth"
+      ;;
+    "tealdeer")
+      echo "Fast tldr client - Simplified, example-based man pages for common commands"
+      ;;
+    "topgrade")
+      echo "Upgrade everything - Updates all package managers and tools at once"
+      ;;
+    "trash")
+      echo "Move files to macOS Trash instead of permanently deleting them"
+      ;;
+    "watch")
+      echo "Execute a program periodically and display output - Monitor command output"
+      ;;
+    "zip")
+      echo "Compression and file packaging utility"
+      ;;
+    "zsh")
+      echo "Z shell - Advanced shell with many features"
+      ;;
+    "ripgrep")
+      echo "Fast text search tool (rg) - Recursively searches directories"
+      ;;
+    "shellcheck")
+      echo "Static analysis tool for shell scripts"
+      ;;
+    "shfmt")
+      echo "Shell formatter - Format shell scripts automatically"
+      ;;
+    "python@3.12")
+      echo "Python 3.12 programming language interpreter"
+      ;;
+    "pipx")
+      echo "Install and run Python applications in isolated environments"
+      ;;
+    "pyenv")
+      echo "Python version management tool"
+      ;;
+    "openjdk")
+      echo "OpenJDK - Open-source Java Development Kit"
+      ;;
+    "ffmpeg")
+      echo "Complete solution for recording, converting and streaming audio/video"
+      ;;
+    "chromaprint")
+      echo "Audio fingerprinting library (used by AcoustID)"
+      ;;
+    "sox")
+      echo "Sound eXchange - Audio processing and conversion tool"
+      ;;
+    *)
+      echo "Command-line tool"
+      ;;
+  esac
+}
+
 # Simple interactive selection: prompt for each item individually
 # Usage: interactive_selection "cask"|"formula" items_array selected_array
 # items_array format: "name|line|id" for each item
@@ -300,9 +437,19 @@ interactive_selection() {
       continue
     fi
     
+    # Get description for formulae
+    local description=""
+    if [[ "$type" == "formula" ]]; then
+      description=$(get_formula_description "$name")
+    fi
+    
     # Prompt user
     while true; do
-      printf "Install %s? [y/N]: " "$name" > /dev/tty
+      if [[ -n "$description" ]]; then
+        printf "\nInstall %s?\n  Description: %s\n[y/N]: " "$name" "$description" > /dev/tty
+      else
+        printf "Install %s? [y/N]: " "$name" > /dev/tty
+      fi
       read -r response < /dev/tty
       case "$response" in
         [yY]|[yY][eE][sS])
