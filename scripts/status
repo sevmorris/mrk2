@@ -5,31 +5,17 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-BREWFILE="$REPO_ROOT/Brewfile"
+readonly SCRIPT_DIR REPO_ROOT
+readonly BREWFILE="$REPO_ROOT/Brewfile"
 
-log()  { printf "[status] %s\n" "$*"; }
-warn() { printf "[warn]  %s\n" "$*"; }
+warn() { printf "[warn] %s\n" "$*" >&2; }
 
 check_homebrew() {
   if command -v brew >/dev/null 2>&1; then
-    local version
-    version=$(brew --version | head -n1)
-    echo "✓ Homebrew: $version"
+    echo "✓ Homebrew: $(brew --version | head -n1)"
     return 0
   else
     echo "✗ Homebrew: Not installed"
-    return 1
-  fi
-}
-
-check_mas() {
-  if command -v mas >/dev/null 2>&1; then
-    local version
-    version=$(mas version 2>/dev/null || echo "unknown")
-    echo "✓ mas: $version"
-    return 0
-  else
-    echo "✗ mas: Not installed"
     return 1
   fi
 }
@@ -40,34 +26,21 @@ check_brewfile() {
     return 1
   fi
 
-  echo "✓ Brewfile: Found at $BREWFILE"
-  
-  local formulae_count=0
-  local casks_count=0
-  local mas_count=0
-  local taps_count=0
+  echo "✓ Brewfile: Found"
 
-  if command -v brew >/dev/null 2>&1; then
-    # Count items, ensuring we get numeric values (strip whitespace/newlines)
-    formulae_count=$(grep -c "^brew " "$BREWFILE" 2>/dev/null | tr -d '[:space:]' || echo "0")
-    casks_count=$(grep -c "^cask " "$BREWFILE" 2>/dev/null | tr -d '[:space:]' || echo "0")
-    mas_count=$(grep -c "^mas " "$BREWFILE" 2>/dev/null | tr -d '[:space:]' || echo "0")
-    taps_count=$(grep -c "^tap " "$BREWFILE" 2>/dev/null | tr -d '[:space:]' || echo "0")
+  # Count items in single pass
+  local formulae=0 casks=0 taps=0
+  while IFS= read -r line; do
+    case "$line" in
+      brew\ *) ((formulae++)) ;;
+      cask\ *) ((casks++)) ;;
+      tap\ *)  ((taps++)) ;;
+    esac
+  done < "$BREWFILE"
 
-    # Ensure they're numeric (default to 0 if empty or non-numeric)
-    formulae_count=${formulae_count:-0}
-    casks_count=${casks_count:-0}
-    mas_count=${mas_count:-0}
-    taps_count=${taps_count:-0}
-
-    echo "  - Formulae: $formulae_count"
-    echo "  - Casks: $casks_count"
-    echo "  - MAS apps: $mas_count"
-    if (( taps_count > 0 )); then
-      echo "  - Taps: $taps_count"
-    fi
-  fi
-
+  echo "  - Formulae: $formulae"
+  echo "  - Casks: $casks"
+  (( taps > 0 )) && echo "  - Taps: $taps"
   return 0
 }
 
@@ -79,16 +52,13 @@ check_installed_packages() {
 
   echo ""
   echo "Installed packages from Brewfile:"
-  
-  local installed=0
-  local missing=0
-  local total=0
 
-  # Check formulae
+  local installed=0 missing=0 total=0
+
+  # Single-pass: check both formulae and casks
   while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    [[ "$line" =~ ^# ]] && continue
-    
+    [[ -z "$line" || "$line" =~ ^# ]] && continue
+
     if [[ "$line" =~ ^brew\ \"([^\"]+)\" ]]; then
       local pkg="${BASH_REMATCH[1]}"
       ((total++))
@@ -99,15 +69,7 @@ check_installed_packages() {
         echo "  ✗ $pkg (not installed)"
         ((missing++))
       fi
-    fi
-  done < "$BREWFILE"
-
-  # Check casks
-  while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    [[ "$line" =~ ^# ]] && continue
-    
-    if [[ "$line" =~ ^cask\ \"([^\"]+)\" ]]; then
+    elif [[ "$line" =~ ^cask\ \"([^\"]+)\" ]]; then
       local cask="${BASH_REMATCH[1]}"
       ((total++))
       if brew list --cask "$cask" >/dev/null 2>&1; then
@@ -131,16 +93,12 @@ main() {
   echo ""
 
   check_homebrew
-  check_mas
   check_brewfile
 
-  if command -v brew >/dev/null 2>&1; then
-    check_installed_packages
-  fi
+  command -v brew >/dev/null 2>&1 && check_installed_packages
 
   echo ""
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
 main
-

@@ -12,7 +12,6 @@ fi
 
 NO_CASKS=0
 NO_FORMULAE=0
-ONLY_FORMULAE=0
 DEBUG=0
 DRY_RUN=0
 SKIP_BREW_INSTALL=0
@@ -21,7 +20,7 @@ while (("$#")); do
   case "$1" in
     --no-casks) NO_CASKS=1 ;;
     --no-formulae) NO_FORMULAE=1 ;;
-    --only-formulae) ONLY_FORMULAE=1; NO_CASKS=1 ;;
+    --only-formulae) NO_CASKS=1 ;;  # Only formulae = skip casks
     --skip-brew-install) SKIP_BREW_INSTALL=1 ;;
     --debug) DEBUG=1 ;;
     --dry-run) DRY_RUN=1 ;;
@@ -50,10 +49,22 @@ if (( DRY_RUN )); then
   echo "=== DRY RUN MODE: No changes will be made ===" >&2
 fi
 
+# Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-BREWFILE="$REPO_ROOT/Brewfile"
-LOGFILE="$HOME/mrk2-install.log"
+readonly SCRIPT_DIR REPO_ROOT
+readonly BREWFILE="$REPO_ROOT/Brewfile"
+readonly LOGFILE="$HOME/mrk2-install.log"
+readonly LOG_MAX_SIZE=10485760  # 10MB - rotate log when exceeded
+
+# Temp file for dynamic Brewfile (script-level for proper cleanup)
+TEMP_BREWFILE=""
+
+# Cleanup function for proper resource management
+cleanup() {
+  [[ -n "$TEMP_BREWFILE" && -f "$TEMP_BREWFILE" ]] && rm -f "$TEMP_BREWFILE"
+}
+trap cleanup EXIT INT TERM
 
 # Create log directory
 if ! mkdir -p "$(dirname "$LOGFILE")"; then
@@ -68,11 +79,9 @@ dry()  { if (( DRY_RUN )); then printf "[dry] %s\n" "$*"; else log "$@"; fi; }
 
 # Setup logging with rotation
 setup_logging() {
-  local max_size=10485760  # 10MB
-  if [[ -f "$LOGFILE" ]] && [[ $(stat -f%z "$LOGFILE" 2>/dev/null || echo 0) -gt $max_size ]]; then
-    local rotated="${LOGFILE}.old"
-    mv "$LOGFILE" "$rotated" 2>/dev/null || true
-    echo "[mrk2] Rotated log file (size exceeded ${max_size} bytes)" >&2
+  if [[ -f "$LOGFILE" ]] && [[ $(stat -f%z "$LOGFILE" 2>/dev/null || echo 0) -gt $LOG_MAX_SIZE ]]; then
+    mv "$LOGFILE" "${LOGFILE}.old" 2>/dev/null || true
+    echo "[mrk2] Rotated log file (exceeded $((LOG_MAX_SIZE / 1024 / 1024))MB)" >&2
   fi
 }
 
@@ -90,7 +99,6 @@ BREW_INSTALLED=0
 FORMULAE_INSTALLED=0
 CASKS_INSTALLED=0
 ERRORS=0
-WARNINGS=0
 
 # Check if Homebrew is installed
 check_homebrew() {
@@ -155,241 +163,64 @@ ensure_brew_path() {
   fi
 }
 
-# MAS (Mac App Store) support has been removed due to reliability issues
-
-# Read a single keypress, handling escape sequences for arrow keys
-# Returns: "UP", "DOWN", "SPACE", "ENTER", or the character pressed
-# Note: Terminal should already be in raw mode when this is called
-read_key() {
-  local key
-  
-  # Terminal should already be in raw mode from interactive_selection
-  # We don't need to change terminal settings here
-  
-  # Read first character (will timeout after 0.2 seconds)
-  # In raw mode, we need to read carefully to avoid blocking
-  IFS= read -r -n 1 -t 0.2 key < /dev/tty 2>/dev/null
-  local read_status=$?
-  
-  # If we got escape sequence, read the rest immediately
-  if [[ "$key" == $'\033' ]]; then
-    # Read the next 2 characters immediately (no timeout in raw mode)
-    # We need to read quickly to consume the entire sequence
-    local next_char=""
-    local dir_char=""
-    
-    # Try to read '[' with a very short timeout
-    if IFS= read -r -n 1 -t 0.05 next_char < /dev/tty 2>/dev/null; then
-      if [[ "$next_char" == "[" ]]; then
-        # Read the direction character [A-D]
-        if IFS= read -r -n 1 -t 0.05 dir_char < /dev/tty 2>/dev/null; then
-          case "$dir_char" in
-            A) key="UP" ;;
-            B) key="DOWN" ;;
-            C) key="RIGHT" ;;
-            D) key="LEFT" ;;
-            *) 
-              # Invalid direction, consume and ignore
-              key=""
-              ;;
-          esac
-        else
-          # Timeout reading direction
-          key=""
-        fi
-      else
-        # Not a standard arrow key sequence
-        key=""
-      fi
-    else
-      # Timeout reading '['
-      key=""
-    fi
-    
-    # Immediately flush any remaining characters in the buffer
-    # This is critical - consume everything that might be left
-    local flush_attempts=0
-    while (( flush_attempts < 50 )); do
-      # Use a very short timeout to check for available data
-      if ! IFS= read -r -t 0.001 < /dev/tty 2>/dev/null; then
-        break
-      fi
-      # Consume one character immediately
-      IFS= read -r -n 1 -t 0.001 < /dev/tty >/dev/null 2>&1 || break
-      ((flush_attempts++))
-    done
-  elif [[ $read_status -ne 0 ]] || [[ -z "$key" ]]; then
-    # Timeout or empty, just return empty (terminal stays in raw mode)
-    echo -n ""
-    return 0
-  elif [[ "$key" == " " ]]; then
-    key="SPACE"
-  elif [[ "$key" == $'\n' ]] || [[ "$key" == $'\r' ]]; then
-    # Handle Enter key
-    key="ENTER"
-  elif [[ "$key" == "q" ]] || [[ "$key" == "Q" ]]; then
-    key="QUIT"
-  elif [[ "$key" == "a" ]] || [[ "$key" == "A" ]]; then
-    key="ALL"
-  elif [[ "$key" == "n" ]] || [[ "$key" == "N" ]]; then
-    key="NONE"
-  elif [[ "$key" == "d" ]] || [[ "$key" == "D" ]]; then
-    # Alternative way to finish (d for done)
-    key="ENTER"
-  fi
-  
-  # Flush any remaining input to prevent escape sequences from leaking
-  # Since terminal is already in raw mode, we just need to consume any buffered input
-  local flush_count=0
-  while IFS= read -r -t 0 < /dev/tty 2>/dev/null && (( flush_count < 20 )); do
-    IFS= read -r -n 1 -t 0.005 < /dev/tty >/dev/null 2>&1 || break
-    ((flush_count++))
-  done
-  
-  echo -n "$key"
-}
+# Formula descriptions (associative array for O(1) lookup)
+declare -A FORMULA_DESCRIPTIONS=(
+  [bash]="Bourne Again SHell - Modern shell with improved features"
+  [bash-completion@2]="Programmable tab completion for Bash 4.1+"
+  [bat]="Cat clone with syntax highlighting and Git integration"
+  [coreutils]="GNU core utilities - Enhanced versions of basic Unix tools"
+  [fastfetch]="Fast system information display tool"
+  [gh]="GitHub CLI - Official command-line tool for GitHub"
+  [git]="Distributed version control system"
+  [gnupg]="GNU Privacy Guard - Encryption and signing tool"
+  [htop]="Interactive process viewer and system monitor"
+  [lsd]="Modern ls replacement with colors and icons"
+  [lzip]="LZMA-based compression tool"
+  [moreutils]="Collection of useful Unix utilities (sponge, vidir, etc.)"
+  [most]="Terminal pager with scrolling and search"
+  [nano]="Simple terminal-based text editor"
+  [nanorc]="Syntax highlighting configuration for nano"
+  [ncdu]="Disk usage analyzer with ncurses interface"
+  [nethogs]="Monitor network usage per process"
+  [nmap]="Network exploration and security auditing tool"
+  [openssh]="OpenSSH client and server for secure remote access"
+  [osx-cpu-temp]="CPU temperature monitor for macOS"
+  [paperkey]="Extract secret keys from GnuPG keyrings for backup"
+  [pinentry-mac]="PIN entry dialog for GnuPG on macOS"
+  [pwgen]="Password generator utility"
+  [qemu]="Generic machine emulator and virtualizer"
+  [qrencode]="QR Code generator from text strings"
+  [rclone]="Cloud storage sync tool"
+  [speedtest-cli]="Command-line interface for testing internet bandwidth"
+  [tealdeer]="Fast tldr client - Simplified man pages"
+  [topgrade]="Upgrade everything - Updates all package managers at once"
+  [trash]="Move files to macOS Trash instead of deleting"
+  [watch]="Execute a program periodically and display output"
+  [zip]="Compression and file packaging utility"
+  [zsh]="Z shell - Advanced shell with many features"
+  [ripgrep]="Fast text search tool (rg)"
+  [shellcheck]="Static analysis tool for shell scripts"
+  [shfmt]="Shell formatter - Format shell scripts automatically"
+  [python@3.12]="Python 3.12 programming language interpreter"
+  [pipx]="Install and run Python apps in isolated environments"
+  [pyenv]="Python version management tool"
+  [openjdk]="OpenJDK - Open-source Java Development Kit"
+  [ffmpeg]="Complete solution for audio/video conversion"
+  [chromaprint]="Audio fingerprinting library (used by AcoustID)"
+  [sox]="Sound eXchange - Audio processing and conversion tool"
+)
 
 # Get description for a formula
-# Usage: get_formula_description "formula_name"
 get_formula_description() {
   local name="$1"
-  case "$name" in
-    "bash")
-      echo "Bourne Again SHell - Modern shell with improved features"
-      ;;
-    "bash-completion@2")
-      echo "Programmable tab completion for Bash 4.1+ - Auto-complete commands and options"
-      ;;
-    "bat")
-      echo "Cat clone with syntax highlighting, Git integration, and automatic paging"
-      ;;
-    "coreutils")
-      echo "GNU core utilities - Enhanced versions of basic Unix tools (ls, cat, chmod, etc.)"
-      ;;
-    "fastfetch")
-      echo "Fast system information display tool - Shows OS, hardware, and software info"
-      ;;
-    "gh")
-      echo "GitHub CLI - Official command-line tool for GitHub"
-      ;;
-    "git")
-      echo "Distributed version control system"
-      ;;
-    "gnupg")
-      echo "GNU Privacy Guard - Encryption and signing tool"
-      ;;
-    "htop")
-      echo "Interactive process viewer and system monitor"
-      ;;
-    "lsd")
-      echo "Modern ls replacement with colors, icons, and tree view support"
-      ;;
-    "lzip")
-      echo "LZMA-based compression tool - High compression ratio file archiver"
-      ;;
-    "moreutils")
-      echo "Collection of useful Unix utilities (sponge, vidir, ts, combine, etc.)"
-      ;;
-    "most")
-      echo "Terminal pager with scrolling and search capabilities"
-      ;;
-    "nano")
-      echo "Simple terminal-based text editor"
-      ;;
-    "nanorc")
-      echo "Syntax highlighting configuration for nano editor"
-      ;;
-    "ncdu")
-      echo "Disk usage analyzer with ncurses interface"
-      ;;
-    "nethogs")
-      echo "Net top tool - Monitor network usage per process"
-      ;;
-    "nmap")
-      echo "Network exploration and security auditing tool"
-      ;;
-    "openssh")
-      echo "OpenSSH client and server for secure remote access"
-      ;;
-    "osx-cpu-temp")
-      echo "CPU temperature monitor for macOS"
-      ;;
-    "paperkey")
-      echo "Extract secret keys from GnuPG keyrings for backup"
-      ;;
-    "pinentry-mac")
-      echo "PIN entry dialog for GnuPG on macOS"
-      ;;
-    "pwgen")
-      echo "Password generator utility"
-      ;;
-    "qemu")
-      echo "Generic machine emulator and virtualizer"
-      ;;
-    "qrencode")
-      echo "QR Code generator from text strings"
-      ;;
-    "speedtest-cli")
-      echo "Command-line interface for testing internet bandwidth"
-      ;;
-    "tealdeer")
-      echo "Fast tldr client - Simplified, example-based man pages for common commands"
-      ;;
-    "topgrade")
-      echo "Upgrade everything - Updates all package managers and tools at once"
-      ;;
-    "trash")
-      echo "Move files to macOS Trash instead of permanently deleting them"
-      ;;
-    "watch")
-      echo "Execute a program periodically and display output - Monitor command output"
-      ;;
-    "zip")
-      echo "Compression and file packaging utility"
-      ;;
-    "zsh")
-      echo "Z shell - Advanced shell with many features"
-      ;;
-    "ripgrep")
-      echo "Fast text search tool (rg) - Recursively searches directories"
-      ;;
-    "shellcheck")
-      echo "Static analysis tool for shell scripts"
-      ;;
-    "shfmt")
-      echo "Shell formatter - Format shell scripts automatically"
-      ;;
-    "python@3.12")
-      echo "Python 3.12 programming language interpreter"
-      ;;
-    "pipx")
-      echo "Install and run Python applications in isolated environments"
-      ;;
-    "pyenv")
-      echo "Python version management tool"
-      ;;
-    "openjdk")
-      echo "OpenJDK - Open-source Java Development Kit"
-      ;;
-    "ffmpeg")
-      echo "Complete solution for recording, converting and streaming audio/video"
-      ;;
-    "chromaprint")
-      echo "Audio fingerprinting library (used by AcoustID)"
-      ;;
-    "sox")
-      echo "Sound eXchange - Audio processing and conversion tool"
-      ;;
-    *)
-      echo "Command-line tool"
-      ;;
-  esac
+  echo "${FORMULA_DESCRIPTIONS[$name]:-Command-line tool}"
 }
 
 # Simple interactive selection: prompt for each item individually
 # Usage: interactive_selection "cask"|"formula" items_array selected_array
 # items_array format: "name|line|id" for each item
 # Returns selected items in selected_array (associative array)
+# shellcheck disable=SC2034  # namerefs appear unused but are used indirectly
 interactive_selection() {
   local type="$1"  # "cask" or "formula"
   local -n items="$2"  # array of items: "name|line|id"
@@ -487,14 +318,12 @@ install_brewfile() {
   if (( DRY_RUN )); then
     dry "Would run: brew bundle --file=\"$BREWFILE\""
     log "Brewfile contains:"
-    grep -E "^(brew|cask|tap)" "$BREWFILE" | wc -l | xargs echo "  - Packages/casks:"
+    echo "  - Packages/casks: $(grep -cE "^(brew|cask|tap)" "$BREWFILE")"
     return 0
   fi
 
   # Parse Brewfile and collect items
-  local temp_brewfile
-  temp_brewfile=$(mktemp /tmp/mrk2-brewfile.XXXXXX)
-  trap "rm -f '$temp_brewfile'" EXIT
+  TEMP_BREWFILE=$(mktemp /tmp/mrk2-brewfile.XXXXXX)
 
   local formulae_count=0
   local casks_count=0
@@ -514,7 +343,7 @@ install_brewfile() {
   while IFS= read -r line || [[ -n "$line" ]]; do
     # Copy taps, comments, and blank lines directly
     if [[ "$line" =~ ^tap\  ]] || [[ "$line" =~ ^# ]] || [[ -z "$line" ]]; then
-      echo "$line" >> "$temp_brewfile"
+      echo "$line" >> "$TEMP_BREWFILE"
       continue
     fi
 
@@ -575,7 +404,7 @@ install_brewfile() {
     fi
 
     # Copy any other lines we don't recognize (for future compatibility)
-    echo "$line" >> "$temp_brewfile"
+    echo "$line" >> "$TEMP_BREWFILE"
   done < "$BREWFILE"
 
   log "Found: ${#formula_items[@]} formulae to select, ${#cask_items[@]} casks to select"
@@ -593,7 +422,7 @@ install_brewfile() {
           log "Formula '$name' is already installed, skipping installation"
           continue
         fi
-        echo "${formula_lines[$name]}" >> "$temp_brewfile"
+        echo "${formula_lines[$name]}" >> "$TEMP_BREWFILE"
         ((selected_count++))
       fi
     done
@@ -619,7 +448,7 @@ install_brewfile() {
           log "Cask '$name' is already installed, skipping installation"
           continue
         fi
-        echo "${cask_lines[$name]}" >> "$temp_brewfile"
+        echo "${cask_lines[$name]}" >> "$TEMP_BREWFILE"
         ((selected_count++))
       fi
     done
@@ -628,38 +457,17 @@ install_brewfile() {
   fi
 
   # Install from temporary Brewfile
-  # Ensure terminal is in normal state before running brew bundle
-  # (in case it's still in raw mode from interactive selection)
+  # Restore terminal to normal state before running brew bundle
   stty echo icanon < /dev/tty 2>/dev/null || true
-  tput cnorm > /dev/tty 2>/dev/null || true
-  
+
   log "Installing selected packages..."
-  
-  # Ensure stdin is from terminal for any prompts brew bundle might need
-  # The exec redirections handle stdout/stderr logging, but we need to ensure
-  # brew bundle can read from the terminal if it needs to prompt
-  # Use a subshell to ensure proper file descriptor handling
-  local bundle_exit=0
-  (
-    # Ensure stdin is from terminal
-    exec < /dev/tty
-    # Run brew bundle - output will go through the exec redirections
-    brew bundle --file="$temp_brewfile" --verbose
-  ) || bundle_exit=$?
-  
-  # Flush any pending output to ensure tee processes complete
-  # This prevents hanging after brew bundle finishes
-  exec >&-
-  exec 2>&-
-  sleep 0.1
-  exec > >(tee -a "$LOGFILE")
-  exec 2> >(tee -a "$LOGFILE" >&2)
-  
-  if (( bundle_exit == 0 )); then
+
+  # Run brew bundle with stdin from terminal (for any interactive prompts)
+  if brew bundle --file="$TEMP_BREWFILE" --verbose < /dev/tty; then
     log "Brewfile installation completed successfully"
     return 0
   else
-    err "Brewfile installation failed (exit code: $bundle_exit)"
+    err "Brewfile installation failed"
     ((ERRORS++))
     return 1
   fi
@@ -717,11 +525,7 @@ show_summary() {
   if (( ERRORS > 0 )); then
     echo "  ✗ Errors encountered: $ERRORS"
   fi
-  
-  if (( WARNINGS > 0 )); then
-    echo "  ⚠ Warnings: $WARNINGS"
-  fi
-  
+
   echo ""
   echo "  Log file: $LOGFILE"
   echo ""
@@ -729,18 +533,18 @@ show_summary() {
   echo ""
 }
 
-if (( ! DRY_RUN )); then
-  main
-  if (( ERRORS > 0 )); then
-    log "Installation completed with errors. Check the log: $LOGFILE"
-    exit 1
-  else
-    log "Installation complete."
-  fi
-else
-  main
+# Run main installation
+main
+
+# Report final status
+if (( DRY_RUN )); then
   echo ""
   log "Dry run complete. No changes were made."
   echo "Run without --dry-run to apply changes."
+elif (( ERRORS > 0 )); then
+  log "Installation completed with errors. Check the log: $LOGFILE"
+  exit 1
+else
+  log "Installation complete."
 fi
 
