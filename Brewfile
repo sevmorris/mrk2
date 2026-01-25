@@ -4,6 +4,7 @@
 brew "bash"
 brew "bash-completion@2"
 brew "bat"
+brew "claude-code"
 brew "coreutils"
 brew "fastfetch"
 brew "gh"
