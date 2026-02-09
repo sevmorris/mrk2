@@ -22,10 +22,18 @@ make fix-exec && make install
 ## What it installs
 
 - **Homebrew** (if not already installed)
-- **CLI tools** (formulae) from the Brewfile (ripgrep, shellcheck, languages, etc.) — **interactive prompts**
+- **CLI tools** (formulae) from the Brewfile — **interactive prompts**
+  - Shell utilities (bat, lsd, ripgrep, etc.)
+  - Dev tools (git, gh, shellcheck, shfmt)
+  - Languages/runtimes (Python 3.12, nvm, OpenJDK, pipx, pyenv)
+  - Media tools (ffmpeg, chromaprint, whisper-cpp, yt-dlp)
 - **Applications** via Homebrew Casks (browsers, editors, utilities, etc.) — **interactive prompts**
 
 > **Note:** All packages (formulae and casks) are presented one at a time with simple yes/no prompts. Items already installed are automatically skipped (no prompt shown).
+
+> **Auto-updating casks:** Casks that handle their own updates (browsers, Slack, Discord, etc.) are marked `greedy: true` in the Brewfile so `brew upgrade --greedy` will still check them for updates through Homebrew.
+
+> **Mac App Store:** MAS app entries are present in the Brewfile but commented out. The `mas` CLI is unreliable and these apps are best installed manually from the App Store.
 
 ---
 
