@@ -4,7 +4,7 @@ SHELL := /bin/bash
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 SCRIPTS   := $(REPO_ROOT)/scripts
 
-.PHONY: all install fix-exec status update doctor
+.PHONY: all install fix-exec status update doctor post-install
 
 all: install
 bootstrap: install
@@ -15,6 +15,9 @@ fix-exec:
 
 install: fix-exec
 	@"$(SCRIPTS)/install"
+
+post-install: fix-exec
+	@"$(SCRIPTS)/post-install"
 
 status:
 	@"$(SCRIPTS)/status"

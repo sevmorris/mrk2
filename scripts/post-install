@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# mrk2 post-install — configure apps installed by Homebrew
+#
+# Run after `make install` to set up login items and link configs
+# that depend on Homebrew-installed packages.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+readonly SCRIPT_DIR REPO_ROOT
+
+log(){ printf "[post-install] %s\n" "$*"; }
+
+failed=0
+
+###############################################################################
+# Topgrade configuration                                                      #
+###############################################################################
+
+TOPGRADE_SRC="$REPO_ROOT/assets/topgrade.toml"
+TOPGRADE_DST="$HOME/.config/topgrade.toml"
+
+if command -v topgrade >/dev/null 2>&1 && [[ -f "$TOPGRADE_SRC" ]]; then
+  mkdir -p "$HOME/.config"
+  if [[ -L "$TOPGRADE_DST" ]]; then
+    log "Topgrade config already linked"
+  else
+    [[ -f "$TOPGRADE_DST" ]] && mv "$TOPGRADE_DST" "${TOPGRADE_DST}.bak"
+    ln -s "$TOPGRADE_SRC" "$TOPGRADE_DST"
+    log "Linked topgrade config → $TOPGRADE_DST"
+  fi
+else
+  log "Skipping topgrade config (topgrade not installed)"
+fi
+
+###############################################################################
+# Login items                                                                 #
+###############################################################################
+
+# Add a login item if the app exists and isn't already registered
+add_login_item(){
+  local app_path="$1"
+  local app_name
+  app_name=$(basename "$app_path" .app)
+
+  if [[ ! -d "$app_path" ]]; then
+    log "Skipping login item (not installed): $app_name"
+    return 0
+  fi
+
+  if osascript -e "tell application \"System Events\" to get the name of every login item" 2>/dev/null | grep -q "$app_name"; then
+    log "Login item already exists: $app_name"
+    return 0
+  fi
+
+  osascript -e "tell application \"System Events\" to make login item at end with properties {path:\"$app_path\", hidden:false}" >/dev/null 2>&1 || return 1
+  log "Added login item: $app_name"
+}
+
+add_login_item "/Applications/Dropbox.app"         || ((failed++))
+add_login_item "/Applications/Ice.app"              || ((failed++))
+add_login_item "/Applications/Hot.app"              || ((failed++))
+add_login_item "/Applications/Stats.app"            || ((failed++))
+add_login_item "/Applications/Raycast.app"          || ((failed++))
+add_login_item "/Applications/BetterSnapTool.app"   || ((failed++))
+add_login_item "/Applications/Chrono Plus.app"      || ((failed++))
+
+###############################################################################
+# Summary                                                                     #
+###############################################################################
+
+if (( failed > 0 )); then
+  log "Warning: $failed post-install step(s) failed"
+else
+  log "Post-install complete"
+fi
