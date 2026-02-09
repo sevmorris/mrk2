@@ -22,8 +22,6 @@ status:
 update:
 	@brew update
 	@brew upgrade
-	@brew upgrade --cask
-	@mas upgrade
 
 doctor:
 	@brew doctor
