@@ -28,6 +28,9 @@ make fix-exec && make install
   - Languages/runtimes (Python 3.12, nvm, OpenJDK, pipx, pyenv)
   - Media tools (ffmpeg, chromaprint, whisper-cpp, yt-dlp)
 - **Applications** via Homebrew Casks (browsers, editors, utilities, etc.) — **interactive prompts**
+- **Post-install** configuration for installed apps:
+  - Login items for menu bar utilities (Ice, Stats, Raycast, etc.)
+  - Topgrade config symlinked to `~/.config/topgrade.toml`
 
 > **Note:** All packages (formulae and casks) are presented one at a time with simple yes/no prompts. Items already installed are automatically skipped (no prompt shown).
 
@@ -49,7 +52,8 @@ make fix-exec && make install
 
 ```text
 make fix-exec     # ensure scripts/* are executable
-make install      # full installation (Homebrew → packages → apps)
+make install      # full installation (Homebrew → packages → apps → post-install)
+make post-install # re-run post-install only (login items, config linking)
 make status       # check installation status
 make update       # update all installed packages
 make doctor       # run Homebrew doctor
@@ -98,9 +102,12 @@ make status
 ## Repo layout
 
 ```
+assets/
+  topgrade.toml   # topgrade configuration (linked by post-install)
 Brewfile          # Homebrew packages and casks
 scripts/
   install         # main installer
+  post-install    # login items and config linking
   status          # check installation status
 Makefile
 README.md
