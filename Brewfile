@@ -63,85 +63,85 @@ brew "whisper-cpp"
 brew "yt-dlp"
 
 # Casks - General Applications & Utilities
-cask "1password"
+cask "1password", greedy: true
 cask "1password-cli"
 cask "4k-video-downloader+"
-cask "a-better-finder-rename"
+cask "a-better-finder-rename", greedy: true
 cask "adapter"
-cask "aldente"
-cask "appcleaner"
-cask "arctic"
-cask "audio-hijack"
+cask "aldente", greedy: true
+cask "appcleaner", greedy: true
+cask "arctic", greedy: true
+cask "audio-hijack", greedy: true
 cask "auto-claude"
 cask "balenaetcher"
-cask "brave-browser"
+cask "brave-browser", greedy: true
 cask "calibre"
-cask "chatgpt"
-cask "claude"
+cask "chatgpt", greedy: true
+cask "claude", greedy: true
 cask "claude-code"
 cask "cryptomator"
-cask "descript"
-cask "discord"
-cask "disk-drill"
-cask "dropbox"
+cask "descript", greedy: true
+cask "discord", greedy: true
+cask "disk-drill", greedy: true
+cask "dropbox", greedy: true
 cask "etrecheckpro"
-cask "farrago"
-cask "firefox"
-cask "fission"
-cask "folx"
-cask "github"
-cask "google-chrome"
-cask "google-chrome@canary"
-cask "google-drive"
-cask "gpg-suite-no-mail"
-cask "handbrake-app"
-cask "helium-browser"
-cask "hot"
+cask "farrago", greedy: true
+cask "firefox", greedy: true
+cask "fission", greedy: true
+cask "folx", greedy: true
+cask "github", greedy: true
+cask "google-chrome", greedy: true
+cask "google-chrome@canary", greedy: true
+cask "google-drive", greedy: true
+cask "gpg-suite-no-mail", greedy: true
+cask "handbrake-app", greedy: true
+cask "helium-browser", greedy: true
+cask "hot", greedy: true
 cask "ilok-license-manager"
-cask "iterm2"
+cask "iterm2", greedy: true
 cask "izotope-product-portal"
-cask "jordanbaird-ice"
-cask "keka"
-cask "keybase"
+cask "jordanbaird-ice", greedy: true
+cask "keka", greedy: true
+cask "keybase", greedy: true
 cask "keyboardcleantool"
 cask "kid3"
 cask "kobo"
-cask "loopback"
+cask "loopback", greedy: true
 cask "losslesscut"
-cask "macfuse"
-cask "macwhisper"
+cask "macfuse", greedy: true
+cask "macwhisper", greedy: true
 cask "mdrp"
 cask "mediainfo"
-cask "minecraft"
+cask "minecraft", greedy: true
 cask "musicbrainz-picard"
-cask "nordvpn"
-cask "omnidisksweeper"
+cask "nordvpn", greedy: true
+cask "omnidisksweeper", greedy: true
 cask "onyx"
 cask "openaudible"
 cask "openmtp"
-cask "piezo"
+cask "piezo", greedy: true
 cask "pulsar"
 cask "raspberry-pi-imager"
-cask "raycast"
-cask "samsung-magician"
-cask "screenflow"
+cask "raycast", greedy: true
+cask "samsung-magician", greedy: true
+cask "screenflow", greedy: true
 cask "shutter-encoder"
-cask "signal"
-cask "slack"
-cask "soundsource"
-cask "stats"
-cask "steam"
-cask "subler"
-cask "swift-publisher"
-cask "the-unarchiver"
-cask "timemachineeditor"
-cask "typora"
+cask "signal", greedy: true
+cask "slack", greedy: true
+cask "soundsource", greedy: true
+cask "stats", greedy: true
+cask "steam", greedy: true
+cask "subler", greedy: true
+cask "swift-publisher", greedy: true
+cask "the-unarchiver", greedy: true
+cask "timemachineeditor", greedy: true
+cask "typora", greedy: true
 cask "utm"
 cask "veracrypt"
-cask "vlc"
-cask "waves-central"
-cask "whatsapp"
-cask "zoom"
+cask "vlc", greedy: true
+cask "waves-central", greedy: true
+cask "whatsapp", greedy: true
+cask "zoom", greedy: true
 
 # Mac App Store Apps
 #mas "Amphetamine", id: 937984704
