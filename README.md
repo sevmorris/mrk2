@@ -31,6 +31,7 @@ make fix-exec && make install
 - **Post-install** configuration for installed apps:
   - Login items for menu bar utilities (Ice, Stats, Raycast, etc.)
   - Topgrade config symlinked to `~/.config/topgrade.toml`
+  - Browser preferences: Safari/Helium defaults, Chrome/Brave managed policies, optional extension URL opening
 
 > **Note:** All packages (formulae and casks) are presented one at a time with simple yes/no prompts. Items already installed are automatically skipped (no prompt shown).
 
@@ -103,15 +104,25 @@ make status
 
 ```
 assets/
-  topgrade.toml   # topgrade configuration (linked by post-install)
-Brewfile          # Homebrew packages and casks
+  topgrade.toml           # topgrade configuration (linked by post-install)
+  browsers/
+    safari-defaults.sh    # Safari power-user defaults
+    helium-defaults.sh    # Helium auto-update defaults
+    chrome-policy.json    # Chrome managed policy
+    brave-policy.json     # Brave managed policy
+    *-extensions.txt.example  # extension URL list templates
+Brewfile                  # Homebrew packages and casks
 scripts/
-  install         # main installer
-  post-install    # login items and config linking
-  status          # check installation status
+  install                 # main installer
+  post-install            # login items, config linking, browser prefs
+  status                  # check installation status
 Makefile
 README.md
 ```
+
+> **Browser extensions:** To have post-install prompt you to open extension URLs, copy the `.example` template for your browser and remove the `.example` suffix (e.g., `cp assets/browsers/chrome-extensions.txt.example assets/browsers/chrome-extensions.txt`), then add your extension URLs. These files are gitignored since they're user-specific.
+
+> **Managed policies:** Chrome and Brave policies will show a "Managed by your organization" indicator in browser settings. Delete `mrk2-policy.json` from the browser's `policies/managed/` directory and relaunch to remove it.
 
 ---
 

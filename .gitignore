@@ -29,6 +29,9 @@ mrk2-install.log
 test-*
 *.test
 
+# Browser extension lists (user-specific)
+assets/browsers/*-extensions.txt
+
 # Homebrew
 Brewfile.lock.json
 
