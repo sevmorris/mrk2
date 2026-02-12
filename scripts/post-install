@@ -168,11 +168,12 @@ add_login_item(){
   log "Added login item: $app_name"
 }
 
-add_login_item "/Applications/Dropbox.app"         || ((failed++))
+add_login_item "/Applications/AlDente.app"          || ((failed++))
+add_login_item "/Applications/Dropbox.app"          || ((failed++))
 add_login_item "/Applications/Ice.app"              || ((failed++))
 add_login_item "/Applications/Hot.app"              || ((failed++))
-add_login_item "/Applications/Stats.app"            || ((failed++))
 add_login_item "/Applications/Raycast.app"          || ((failed++))
+add_login_item "/Applications/Stats.app"            || ((failed++))
 add_login_item "/Applications/BetterSnapTool.app"   || ((failed++))
 add_login_item "/Applications/Chrono Plus.app"      || ((failed++))
 
