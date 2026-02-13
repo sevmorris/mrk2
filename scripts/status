@@ -53,16 +53,25 @@ check_installed_packages() {
   echo ""
   echo "Installed packages from Brewfile:"
 
+  # Pre-fetch installed package lists for O(1) lookup
+  declare -A _installed_formulae=()
+  declare -A _installed_casks=()
+  while IFS= read -r _pkg; do
+    [[ -n "$_pkg" ]] && _installed_formulae["$_pkg"]=1
+  done < <(brew list --formula 2>/dev/null)
+  while IFS= read -r _pkg; do
+    [[ -n "$_pkg" ]] && _installed_casks["$_pkg"]=1
+  done < <(brew list --cask 2>/dev/null)
+
   local installed=0 missing=0 total=0
 
-  # Single-pass: check both formulae and casks
   while IFS= read -r line; do
     [[ -z "$line" || "$line" =~ ^# ]] && continue
 
     if [[ "$line" =~ ^brew\ \"([^\"]+)\" ]]; then
       local pkg="${BASH_REMATCH[1]}"
       ((total++))
-      if brew list "$pkg" >/dev/null 2>&1; then
+      if [[ -n "${_installed_formulae[$pkg]+x}" ]]; then
         echo "  ✓ $pkg"
         ((installed++))
       else
@@ -72,7 +81,7 @@ check_installed_packages() {
     elif [[ "$line" =~ ^cask\ \"([^\"]+)\" ]]; then
       local cask="${BASH_REMATCH[1]}"
       ((total++))
-      if brew list --cask "$cask" >/dev/null 2>&1; then
+      if [[ -n "${_installed_casks[$cask]+x}" ]]; then
         echo "  ✓ $cask (cask)"
         ((installed++))
       else

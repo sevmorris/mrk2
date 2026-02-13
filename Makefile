@@ -23,8 +23,12 @@ status:
 	@"$(SCRIPTS)/status"
 
 update:
-	@brew update
-	@brew upgrade
+	@if command -v topgrade >/dev/null 2>&1; then \
+		topgrade; \
+	else \
+		echo "topgrade not found, falling back to brew update && brew upgrade"; \
+		brew update && brew upgrade; \
+	fi
 
 doctor:
 	@brew doctor

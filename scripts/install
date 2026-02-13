@@ -218,14 +218,14 @@ get_formula_description() {
 }
 
 # Simple interactive selection: prompt for each item individually
-# Usage: interactive_selection "cask"|"formula" items_array selected_array
+# Usage: interactive_selection "cask"|"formula" items_array_name selected_array_name
 # items_array format: "name|line|id" for each item
-# Returns selected items in selected_array (associative array)
-# shellcheck disable=SC2034  # namerefs appear unused but are used indirectly
+# Sets selected items in selected_array (associative array): selected[name]=1 if selected
+# Compatible with Bash 3.2+ (no namerefs)
 interactive_selection() {
   local type="$1"  # "cask" or "formula"
-  local -n items="$2"  # array of items: "name|line|id"
-  local -n selected="$3"  # associative array: selected[name]=1 if selected
+  local items_var="$2"  # name of array variable containing items
+  local selected_var="$3"  # name of associative array to store selections
   
   # Only show selection if we have a TTY
   if [[ ! -t 0 ]]; then
@@ -233,8 +233,10 @@ interactive_selection() {
     return 0
   fi
   
-  local total=${#items[@]}
-  if (( total == 0 )); then
+  # Get item count via indirect expansion
+  local eval_total
+  eval "eval_total=\${#${items_var}[@]}"
+  if (( eval_total == 0 )); then
     return 0
   fi
   
@@ -250,22 +252,17 @@ interactive_selection() {
   echo "Select $type_label items to install (y/n, default: n):"
   echo ""
   
-  # Initialize all as unselected
-  local i
-  for i in "${!items[@]}"; do
-    local item_data="${items[$i]}"
-    local name="${item_data%%|*}"
-    selected["$name"]=0
-  done
-  
-  # Prompt for each item (skip already installed)
-  for i in "${!items[@]}"; do
-    local item_data="${items[$i]}"
-    local name="${item_data%%|*}"
+  # Initialize all as unselected and prompt
+  local i item_data name
+  for (( i=0; i<eval_total; i++ )); do
+    eval "item_data=\${${items_var}[$i]}"
+    name="${item_data%%|*}"
+    
+    # Default to unselected
+    eval "${selected_var}[\"\$name\"]=0"
     
     # Skip if already installed
     if [[ "$item_data" == *"|installed" ]]; then
-      selected["$name"]=0
       continue
     fi
     
@@ -282,14 +279,14 @@ interactive_selection() {
       else
         printf "Install %s? [y/N]: " "$name" > /dev/tty
       fi
+      local response
       read -r response < /dev/tty
       case "$response" in
         [yY]|[yY][eE][sS])
-          selected["$name"]=1
+          eval "${selected_var}[\"\$name\"]=1"
           break
           ;;
         [nN]|[nN][oO]|"")
-          selected["$name"]=0
           break
           ;;
         *)
@@ -339,8 +336,19 @@ install_brewfile() {
   declare -A formula_lines=()
   declare -A cask_lines=()
 
+  # Pre-fetch installed package lists for O(1) lookup (avoids per-package brew list calls)
+  log "Fetching installed package lists..."
+  declare -A _installed_formulae=()
+  declare -A _installed_casks=()
+  while IFS= read -r _pkg; do
+    [[ -n "$_pkg" ]] && _installed_formulae["$_pkg"]=1
+  done < <(brew list --formula 2>/dev/null)
+  while IFS= read -r _pkg; do
+    [[ -n "$_pkg" ]] && _installed_casks["$_pkg"]=1
+  done < <(brew list --cask 2>/dev/null)
+
   # First pass: collect all items and check installation status
-  log "Scanning Brewfile for packages... (this may take a moment, please be patient)"
+  log "Scanning Brewfile for packages..."
   while IFS= read -r line || [[ -n "$line" ]]; do
     # Copy taps, comments, and blank lines directly
     if [[ "$line" =~ ^tap\  ]] || [[ "$line" =~ ^# ]] || [[ -z "$line" ]]; then
@@ -357,15 +365,8 @@ install_brewfile() {
         continue
       fi
 
-      # Check if already installed (but still add to selection list)
-      local already_installed=0
-      if brew list "$formula" >/dev/null 2>&1; then
-        already_installed=1
-      fi
-
-      # Add to selection list (even if already installed, so user can see all options)
-      # Use same format as casks: "name|line|installed" or "name|line|"
-      if (( already_installed )); then
+      # Check if already installed using cached list (O(1) lookup)
+      if [[ -n "${_installed_formulae[$formula]+x}" ]]; then
         formula_items+=("$formula|$line|installed")
       else
         formula_items+=("$formula|$line|")
@@ -383,14 +384,8 @@ install_brewfile() {
         continue
       fi
 
-      # Check if already installed (but still add to selection list)
-      local already_installed=0
-      if brew list --cask "$cask" >/dev/null 2>&1; then
-        already_installed=1
-      fi
-
-      # Add to selection list (even if already installed, so user can see all options)
-      if (( already_installed )); then
+      # Check if already installed using cached list (O(1) lookup)
+      if [[ -n "${_installed_casks[$cask]+x}" ]]; then
         cask_items+=("$cask|$line|installed")
       else
         cask_items+=("$cask|$line|")
@@ -418,8 +413,8 @@ install_brewfile() {
     local selected_count=0
     for name in "${!selected_formulae[@]}"; do
       if (( selected_formulae["$name"] == 1 )); then
-        # Check if already installed - skip if so
-        if brew list "$name" >/dev/null 2>&1; then
+        # Check if already installed using cached list
+        if [[ -n "${_installed_formulae[$name]+x}" ]]; then
           log "Formula '$name' is already installed, skipping installation"
           continue
         fi
@@ -444,8 +439,8 @@ install_brewfile() {
     local selected_count=0
     for name in "${!selected_casks[@]}"; do
       if (( selected_casks["$name"] == 1 )); then
-        # Check if already installed - skip if so
-        if brew list --cask "$name" >/dev/null 2>&1; then
+        # Check if already installed using cached list
+        if [[ -n "${_installed_casks[$name]+x}" ]]; then
           log "Cask '$name' is already installed, skipping installation"
           continue
         fi
@@ -477,6 +472,18 @@ install_brewfile() {
 # Main installation flow
 main() {
   log "Starting mrk2 installation process..."
+
+  # Pre-flight: check if mrk1 has been run
+  if [[ ! -d "$HOME/.mrk1" ]] && [[ "$(basename "$(dscl . -read "/Users/$USER" UserShell 2>/dev/null | awk '{print $2}')" 2>/dev/null)" != "zsh" ]]; then
+    warn "mrk1 does not appear to have been run (~/.mrk1 not found and login shell is not zsh)."
+    warn "It's recommended to run mrk1 first: https://github.com/sevmorris/mrk1"
+  fi
+
+  # Pre-flight: check network connectivity
+  if ! curl -sf --max-time 5 https://brew.sh >/dev/null 2>&1; then
+    err "No internet connection detected."
+    exit 1
+  fi
 
   # Phase 1: Install Homebrew
   if ! install_homebrew; then
