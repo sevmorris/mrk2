@@ -32,6 +32,8 @@ make fix-exec && make install
   - Login items for menu bar utilities (Ice, Stats, Raycast, etc.)
   - Topgrade config symlinked to `~/.config/topgrade.toml`
   - Browser preferences: Safari/Helium defaults, Chrome/Brave managed policies, optional extension URL opening
+  - Application preferences: Audio Hijack, Fission, AlDente, Rogue Amoeba update settings
+  - Full plist imports for BetterSnapTool, Ice, and iTerm2 (only on first setup — won't overwrite existing prefs)
 
 > **Note:** All packages (formulae and casks) are presented one at a time with simple yes/no prompts. Items already installed are automatically skipped (no prompt shown).
 
@@ -111,6 +113,14 @@ assets/
     chrome-policy.json    # Chrome managed policy
     brave-policy.json     # Brave managed policy
     *-extensions.txt.example  # extension URL list templates
+  preferences/
+    audio-hijack-defaults.sh  # Audio Hijack theme, editor, buffer
+    fission-defaults.sh       # Fission custom format defaults
+    rogue-amoeba-updates.sh   # Disable Sparkle auto-update for RA suite
+    aldente-defaults.sh       # AlDente charge management settings
+    BetterSnapTool.plist      # Full BetterSnapTool config (imported on first setup)
+    Ice.plist                 # Full Ice menu bar config (imported on first setup)
+    iTerm2.plist              # Full iTerm2 config (imported on first setup)
 Brewfile                  # Homebrew packages and casks
 scripts/
   install                 # main installer

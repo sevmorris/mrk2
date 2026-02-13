@@ -14,8 +14,8 @@ log(){ printf "[post-install] %s\n" "$*"; }
 
 failed=0
 
-# Run a browser defaults script, log the result
-apply_browser_defaults(){
+# Run a defaults script, log the result
+apply_defaults(){
   local script="$1" name="$2"
   if bash "$script"; then
     log "Applied $name defaults"
@@ -81,7 +81,7 @@ BROWSERS_DIR="$REPO_ROOT/assets/browsers"
 
 # Safari
 if [[ -d "/Applications/Safari.app" ]]; then
-  apply_browser_defaults "$BROWSERS_DIR/safari-defaults.sh" "Safari" || ((failed++))
+  apply_defaults "$BROWSERS_DIR/safari-defaults.sh" "Safari" || ((failed++))
   if [[ -f "$BROWSERS_DIR/safari-extensions.txt" ]]; then
     if [[ -t 0 ]]; then
       printf "[post-install] Open Safari extension URLs? [y/N]: "
@@ -139,10 +139,74 @@ fi
 
 # Helium
 if [[ -d "/Applications/Helium.app" ]]; then
-  apply_browser_defaults "$BROWSERS_DIR/helium-defaults.sh" "Helium" || ((failed++))
+  apply_defaults "$BROWSERS_DIR/helium-defaults.sh" "Helium" || ((failed++))
 else
   log "Skipping Helium (not installed)"
 fi
+
+###############################################################################
+# Application preferences — defaults write scripts                            #
+###############################################################################
+
+PREFS_DIR="$REPO_ROOT/assets/preferences"
+
+# Audio Hijack
+if [[ -d "/Applications/Audio Hijack.app" ]]; then
+  apply_defaults "$PREFS_DIR/audio-hijack-defaults.sh" "Audio Hijack" || ((failed++))
+else
+  log "Skipping Audio Hijack defaults (not installed)"
+fi
+
+# Fission
+if [[ -d "/Applications/Fission.app" ]]; then
+  apply_defaults "$PREFS_DIR/fission-defaults.sh" "Fission" || ((failed++))
+else
+  log "Skipping Fission defaults (not installed)"
+fi
+
+# Rogue Amoeba — disable Sparkle auto-updates (managed by topgrade)
+apply_defaults "$PREFS_DIR/rogue-amoeba-updates.sh" "Rogue Amoeba updates" || ((failed++))
+
+# AlDente
+if [[ -d "/Applications/AlDente.app" ]]; then
+  apply_defaults "$PREFS_DIR/aldente-defaults.sh" "AlDente" || ((failed++))
+else
+  log "Skipping AlDente defaults (not installed)"
+fi
+
+###############################################################################
+# Application preferences — plist imports                                     #
+###############################################################################
+
+# Import a full plist if the app is installed and not already configured
+import_plist(){
+  local app_path="$1" bundle_id="$2" plist_file="$3" name="$4"
+  if [[ ! -d "$app_path" ]]; then
+    log "Skipping $name plist (not installed)"
+    return 0
+  fi
+  if [[ ! -f "$plist_file" ]]; then
+    log "Skipping $name plist (asset missing)"
+    return 0
+  fi
+  # Only import if the app hasn't been configured yet (no existing plist)
+  local existing="$HOME/Library/Preferences/${bundle_id}.plist"
+  if [[ -f "$existing" ]]; then
+    log "$name plist already exists — skipping import (won't overwrite)"
+    return 0
+  fi
+  defaults import "$bundle_id" "$plist_file"
+  log "Imported $name preferences"
+}
+
+import_plist "/Applications/BetterSnapTool.app" "com.hegenberg.BetterSnapTool" \
+  "$PREFS_DIR/BetterSnapTool.plist" "BetterSnapTool" || ((failed++))
+
+import_plist "/Applications/Ice.app" "com.jordanbaird.Ice" \
+  "$PREFS_DIR/Ice.plist" "Ice" || ((failed++))
+
+import_plist "/Applications/iTerm.app" "com.googlecode.iterm2" \
+  "$PREFS_DIR/iTerm2.plist" "iTerm2" || ((failed++))
 
 ###############################################################################
 # Login items                                                                 #
